@@ -7,9 +7,7 @@
   'use strict';
 
   // ---- CONFIG ----
-  var DEV_EMAIL    = 'admin@matchestool.pro';
-  var DEV_USERNAME = 'matchestool';
-  var DEV_PASSWORD = 'MatchesPro2024';
+  // No reusable access key or administrator password is stored in browser code.
   var CONTACT_URL   = 'https://wa.me/254722713111';
   var CONTACT_LABEL = '0722 713 111';
   var SESSION_KEY   = 'matchestool_session';
@@ -48,7 +46,7 @@
     '    <div class="mt-card-header">',
     '      <div class="mt-card-eyebrow">Secure client portal</div>',
     '      <div class="mt-card-title">Welcome back</div>',
-    '      <div class="mt-card-subtitle">Sign in to continue to your analytics workspace.</div>',
+    '      <div class="mt-card-subtitle">Enter your individual access key to continue to your analytics workspace.</div>',
     '    </div>',
 
     '    <div class="mt-alert" id="mt-alert">',
@@ -58,7 +56,7 @@
 
     '    <form class="mt-form" id="mt-login-form" autocomplete="off" data-form-type="other" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-protonpass-ignore="true">',
     '      <div class="mt-field">',
-    '        <label class="mt-label" for="mt-email">Username</label>',
+    '        <label class="mt-label" for="mt-email">Username (optional)</label>',
     '        <div class="mt-input-wrap">',
     '          <input class="mt-input" type="search" id="mt-email" name="identity_' + FIELD_NONCE + '" placeholder="" autocomplete="off" aria-autocomplete="none" autocapitalize="none" autocorrect="off" inputmode="text" enterkeyhint="next" spellcheck="false" data-form-type="other" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-protonpass-ignore="true" />',
     '          <span class="mt-input-icon">@</span>',
@@ -79,9 +77,9 @@
     '    </form>',
 
     '    <div class="mt-pricing">',
-    '      <div class="mt-pricing-label">Lifetime Access License</div>',
-    '      <div class="mt-pricing-amount"><span class="mt-currency">$</span>100<span class="mt-currency"> USD</span></div>',
-    '      <div class="mt-pricing-note">One-time payment &middot; Full terminal access</div>',
+    '      <div class="mt-pricing-label">Access key required</div>',
+    '      <div class="mt-pricing-amount">Individual access</div>',
+    '      <div class="mt-pricing-note">Use the key issued to you by the administrator.</div>',
     '    </div>',
 
     '    <div class="mt-contact">',
@@ -166,36 +164,37 @@
     } catch (e) { return false; }
   }
 
-  function createSession(user) {
-    var token = 'mtx-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  function createSession(user, sessionToken, serverExpiresAt) {
+    var token = sessionToken;
+    var expiresAtMs = serverExpiresAt ? Date.parse(serverExpiresAt) : Date.now() + (12 * 60 * 60 * 1000);
     var session = {
-      token:     token,
-      user:      user,
-      expiresAt: Date.now() + (24 * 60 * 60 * 1000)
+      token: token,
+      user: user || { username: 'Authorized user' },
+      expiresAt: expiresAtMs
     };
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
 
-    // Supabase v2 reads from localStorage key: sb-{project-ref}-auth-token
-    var expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    // Keep the existing Supabase-client compatibility shim, but never use it
+    // as the source of access authorization. The API validates the opaque token.
+    var expiresAt = Math.floor(expiresAtMs / 1000);
+    var username = session.user.username || 'authorized-user';
     var supaSession = {
-      access_token:  token,
-      refresh_token: 'refresh-' + Date.now(),
-      expires_in:    3600,
-      expires_at:    expiresAt,
-      token_type:    'bearer',
+      access_token: token,
+      refresh_token: 'access-session-' + token,
+      expires_in: Math.max(0, expiresAt - Math.floor(Date.now() / 1000)),
+      expires_at: expiresAt,
+      token_type: 'bearer',
       user: {
-        id:             'matchestool-user-001',
-        email:          user.email,
-        app_metadata:   {},
-        user_metadata:  { username: user.username },
-        role:           'authenticated',
-        aud:            'authenticated'
+        id: 'matchestool-access-user',
+        email: (username.replace(/[^a-z0-9._-]/gi, '').toLowerCase() || 'user') + '@access.local',
+        app_metadata: {},
+        user_metadata: { username: username },
+        role: 'authenticated',
+        aud: 'authenticated'
       }
     };
     try {
-      // v2 key (project ref: xrfpqifzmsgsvrqyxygb)
       localStorage.setItem('sb-xrfpqifzmsgsvrqyxygb-auth-token', JSON.stringify(supaSession));
-      // v1 key as fallback
       localStorage.setItem('supabase.auth.token', JSON.stringify(supaSession));
     } catch (e) {}
     return session;
@@ -203,13 +202,24 @@
 
   function clearSession() {
     sessionStorage.removeItem(SESSION_KEY);
-    try { localStorage.removeItem('supabase.auth.token'); } catch (e) {}
+    try { localStorage.removeItem('supabase.auth.token'); localStorage.removeItem('sb-xrfpqifzmsgsvrqyxygb-auth-token'); } catch (e) {}
   }
 
-  // ---- VALIDATE ----
-  function validateCredentials(id, pw) {
-    var uid = (id || '').trim().toLowerCase();
-    return (uid === DEV_EMAIL || uid === DEV_USERNAME) && pw === DEV_PASSWORD;
+  // ---- SERVER-VALIDATED ACCESS ----
+  function validateAccessKey(accessKey) {
+    return fetch('/api/access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ action: 'validate', accessKey: accessKey })
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (data) {
+        if (!response.ok || !data.ok || !data.sessionToken) {
+          throw new Error(data.error || 'Invalid, expired, or revoked access key.');
+        }
+        return data;
+      });
+    });
   }
 
   function getAuthFields() {
@@ -414,26 +424,21 @@
         showSystemAlert('Login form error. Please refresh and try again.');
         return;
       }
-      if (!id || !pw) { showAlert('Enter your username and access key.'); return; }
+      if (!pw || !pw.trim()) { showAlert('Enter your access key.'); return; }
       setLoading(true);
-      setTimeout(function () {
+      validateAccessKey(pw.trim()).then(function (result) {
         unlockAuthSurface();
-        if (validateCredentials(id, pw)) {
-          createSession({ email: DEV_EMAIL, username: DEV_USERNAME });
-          btnText.innerHTML = '<span class="mt-btn-loading"><span class="mt-spinner"></span> Access Granted</span>';
-          setTimeout(function () {
-            hideGate();
-            // Full reload so the Supabase client re-initialises and reads the
-            // session we just wrote to localStorage (pushState won't trigger
-            // a re-init of the already-running client).
-            window.location.href = '/';
-          }, 700);
-        } else {
-          setLoading(false);
-          showAlert('Access denied - invalid username or access key.');
-          if (passEl) { passEl.value = ''; passEl.focus(); }
-        }
-      }, 800);
+        createSession(result.user, result.sessionToken, result.expiresAt);
+        btnText.innerHTML = '<span class="mt-btn-loading"><span class="mt-spinner"></span> Access Granted</span>';
+        setTimeout(function () {
+          hideGate();
+          window.location.href = '/';
+        }, 400);
+      }).catch(function (error) {
+        setLoading(false);
+        showAlert(error && error.message ? error.message : 'Access service unavailable. Try again.');
+        if (passEl) { passEl.value = ''; passEl.focus(); }
+      });
     });
 
     if (emailEl) emailEl.addEventListener('input', hideAlert);
@@ -447,16 +452,28 @@
 
   // ---- INIT ----
   function init() {
-    if (isAuthenticated()) {
-      document.documentElement.classList.remove('mt-auth-pending', 'mt-auth-locked');
-      // Refresh the Supabase mock session so the app doesn't think it's expired
-      var raw = sessionStorage.getItem(SESSION_KEY);
-      if (raw) {
-        try { var d = JSON.parse(raw); if (d.user) createSession(d.user); } catch (e) {}
-      }
+    var raw = null;
+    try { raw = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch (e) {}
+    if (!raw || !raw.token || !raw.expiresAt || Date.now() >= raw.expiresAt) {
+      clearSession();
+      showGate();
       return;
     }
-    showGate();
+    fetch('/api/access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ action: 'session', sessionToken: raw.token })
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (data) {
+        if (!response.ok || !data.valid) throw new Error('Session invalid');
+        createSession(data.user || raw.user, raw.token, data.expiresAt || new Date(raw.expiresAt).toISOString());
+        document.documentElement.classList.remove('mt-auth-pending', 'mt-auth-locked');
+      });
+    }).catch(function () {
+      clearSession();
+      showGate();
+    });
   }
 
   if (document.readyState === 'loading') {
