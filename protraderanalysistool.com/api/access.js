@@ -75,7 +75,13 @@ module.exports = async (req, res) => {
       return json(res, 200, { valid: true, expiresAt: rows[0].expires_at, user: { username: keys[0].label || 'Authorized user' } });
     }
     if (!['create', 'list', 'revoke'].includes(action)) return json(res, 400, { error: 'Unknown action.' });
-    if (!adminAllowed(req)) return json(res, 403, { error: 'Admin authorization required.' });
+    const configuredAdminKey = process.env.ACCESS_ADMIN_KEY || '';
+    if (configuredAdminKey.length < 24) {
+      return json(res, 503, { error: 'Admin key is not configured correctly in Vercel. Set ACCESS_ADMIN_KEY to at least 24 characters and redeploy.' });
+    }
+    if (!adminAllowed(req)) {
+      return json(res, 403, { error: 'Admin key does not match ACCESS_ADMIN_KEY for this deployment. Check the exact value and redeploy.' });
+    }
 
     if (action === 'create') {
       const label = String(body.label || '').trim().slice(0, 100);
