@@ -13,7 +13,7 @@ The login now checks keys on the server. Keys are stored as SHA-256 hashes, can 
 Add these as server-side environment variables/secrets in the hosting project:
 
 - `SUPABASE_URL`: the Supabase project URL, for example `https://YOUR_PROJECT_REF.supabase.co`.
-- `SUPABASE_SERVICE_ROLE_KEY`: the project's **service_role** secret. Never use this as a public frontend variable.
+- `SUPABASE_SECRET_KEY`: the project's new `sb_secret_...` key (recommended), OR `SUPABASE_SERVICE_ROLE_KEY`: the legacy `service_role` key. Set only one if possible. Never expose either as a public frontend variable.
 - `ACCESS_ADMIN_KEY`: a randomly generated secret at least 24 characters long. Keep it private.
 
 For Vercel, add the variables under **Project → Settings → Environment Variables**, for Production and Preview as appropriate, then redeploy. Set the Vercel project root to `protraderanalysistool.com` so `api/access.js` is deployed as the `/api/access` function.
