@@ -11,14 +11,18 @@ const db = async (table, method='GET', query='', body) => {
   const base = process.env.SUPABASE_URL;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
   if (!base || !service) throw new Error('Server access database is not configured.');
+  // Supabase legacy service_role keys are JWTs and can be sent as both headers.
+  // New sb_secret_ API keys are not JWTs; send them as apikey only and let the
+  // Supabase API gateway apply the server-side role for the secret key.
+  const headers = {
+    apikey: service,
+    'Content-Type': 'application/json',
+    Prefer: 'return=representation'
+  };
+  if (!service.startsWith('sb_secret_')) headers.Authorization = 'Bearer ' + service;
   const response = await fetch(base.replace(/\/$/, '') + '/rest/v1/' + table + (query ? '?' + query : ''), {
     method,
-    headers: {
-      apikey: service,
-      Authorization: 'Bearer ' + service,
-      'Content-Type': 'application/json',
-      Prefer: method === 'POST' ? 'return=representation' : 'return=representation'
-    },
+    headers,
     ...(body ? { body: JSON.stringify(body) } : {})
   });
   const text = await response.text();
