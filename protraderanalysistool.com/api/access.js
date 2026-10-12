@@ -9,7 +9,7 @@ const hash = value => crypto.createHash('sha256').update(String(value)).digest('
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 const db = async (table, method='GET', query='', body) => {
   const base = process.env.SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
   if (!base || !service) throw new Error('Server access database is not configured.');
   const response = await fetch(base.replace(/\/$/, '') + '/rest/v1/' + table + (query ? '?' + query : ''), {
     method,
