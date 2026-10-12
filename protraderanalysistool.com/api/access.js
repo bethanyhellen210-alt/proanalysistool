@@ -68,7 +68,7 @@ module.exports = async (req, res) => {
       if (!keys.length || (keys[0].expires_at && Date.parse(keys[0].expires_at) <= Date.now())) {
         return json(res, 401, { valid: false });
       }
-      return json(res, 200, { valid: true, user: { username: keys[0].label || 'Authorized user' } });
+      return json(res, 200, { valid: true, expiresAt: rows[0].expires_at, user: { username: keys[0].label || 'Authorized user' } });
     }
     if (!['create', 'list', 'revoke'].includes(action)) return json(res, 400, { error: 'Unknown action.' });
     if (!adminAllowed(req)) return json(res, 403, { error: 'Admin authorization required.' });
