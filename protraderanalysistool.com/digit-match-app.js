@@ -1,48 +1,63 @@
 (function () {
   'use strict';
 
-  // Deriv's public market-data compatibility endpoint; no account token is used.
+  // Public Deriv market data only. This page never places trades or requests an account token.
   var PUBLIC_WS = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
   var SAMPLE_SIZE = 1000;
-  var SIGNAL_TTL = 60;
-  var WATCHLIST = ['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1HZ50V','1HZ75V','1HZ100V'];
+  var LOW_DIGIT_LIMIT = 10.4;
+  var HIGH_DIGIT_LIMIT = 10.5;
   var state = {
-    ws: null, markets: [], data: {}, req: {}, reqId: 10, connected: false,
-    scanned: 0, signal: null, signalTimer: null, outcomes: [], reconnect: null, displayReady: false,
-    lastSignalSymbol: null, consecutiveSignals: 0, totalWins: 0, totalLosses: 0
+    ws: null, connected: false, reconnectTimer: null, requestId: 0, requests: {},
+    markets: [], selectedSymbol: '', samples: [], pip: 2, subscriptionId: null,
+    lastDigit: null, signal: null, sampleReady: false, manualStopped: false
   };
 
   function el(id) { return document.getElementById(id); }
-  function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
-  function pct(value) { return Number(value || 0).toFixed(1) + '%'; }
-  function nowTime(epoch) { return new Date((epoch || Date.now() / 1000) * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
-  function marketName(m) { return m && (m.display_name || m.symbol) || '—'; }
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
   function send(payload, meta) {
     if (!state.ws || state.ws.readyState !== 1) return;
-    payload.req_id = ++state.reqId;
-    if (meta) state.req[payload.req_id] = meta;
+    var id = ++state.requestId;
+    payload.req_id = id;
+    if (meta) state.requests[id] = meta;
     state.ws.send(JSON.stringify(payload));
   }
+  function symbolOf(m) { return m && (m.symbol || m.underlying_symbol || m.underlying) || ''; }
+  function nameOf(m) { return m && (m.display_name || m.underlying_symbol_name || m.name) || symbolOf(m); }
+  function clock(epoch) {
+    return new Date((Number(epoch) || Date.now() / 1000) * 1000).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+  }
+  function pct(n) { return Number(n || 0).toFixed(2) + '%'; }
 
   function template() {
     return '<div class="dm-shell">' +
-      '<header class="dm-topbar"><div class="dm-brand"><span class="dm-logo">M</span><div><strong>MATCHESTOOL.PRO</strong><small>Digit Match Strategy Engine</small></div></div>' +
-      '<div class="dm-top-actions"><button id="dm-logout">Log out</button></div></header>' +
-      '<main class="dm-main">' +
-        '<section class="dm-strategy-strip"><div><span class="dm-kicker">Live watchlist</span><strong>10 Volatility markets</strong><small>V10 · V25 · V50 · V75 · V100 · Standard + 1s</small></div><div class="dm-strip-rule"><span>Signal rule</span><strong>1 tick</strong><small>1-minute entry window</small></div></section>' +
-        '<section class="dm-grid dm-signal-only">' +
-          '<article class="dm-panel dm-signal-panel"><div class="dm-panel-heading"><div><span class="dm-kicker">Top-ranked opportunity</span><h2>Live strategy signal</h2></div><span class="dm-badge" id="dm-signal-state">SCANNING</span></div>' +
-            '<div class="dm-signal-empty" id="dm-signal-empty"><div class="dm-radar"><i></i><i></i><span>0–9</span></div><strong id="dm-analysis-title">Connecting to market data</strong><p id="dm-analysis-status">Opening a secure public data stream…</p><div class="dm-analysis-progress"><i id="dm-analysis-bar"></i></div><div class="dm-analysis-steps"><span id="dm-step-connect">Connect</span><span id="dm-step-history">Load ticks</span><span id="dm-step-compare">Compare</span><span id="dm-step-lock">Lock signal</span></div></div>' +
-            '<div class="dm-signal" id="dm-signal" hidden><div class="dm-signal-market"><span>Market</span><strong id="dm-signal-market">—</strong><small id="dm-signal-symbol">—</small></div>' +
-              '<div class="dm-digit-call"><span>MATCH DIGIT</span><strong id="dm-signal-digit">—</strong></div>' +
-              '<div class="dm-signal-metrics"><div><span>Historical frequency</span><strong id="dm-signal-frequency">—</strong></div><div><span>Occurrences</span><strong id="dm-signal-occurrences">—</strong></div><div><span>Sample</span><strong id="dm-signal-sample">—</strong></div></div>' +
-              '<div class="dm-confidence"><div><span>Observed edge over 10% baseline</span><strong id="dm-edge">—</strong></div><div class="dm-progress"><i id="dm-edge-bar"></i></div></div>' +
-              '<button class="dm-activate" id="dm-activate">Start signal <span>1-minute observation</span></button>' +
-              '<div class="dm-active-trade" id="dm-active-trade" hidden><div class="dm-countdown-row"><span>Signal closes in</span><strong id="dm-countdown">60</strong></div><p>Target <b id="dm-active-digit">—</b> on <b id="dm-active-market">—</b></p><div class="dm-live-title"><span>Live appearing digits</span><strong id="dm-match-status">WAITING FOR MATCH</strong></div><div class="dm-live-digits" id="dm-live-digits"><span>Waiting for live ticks…</span></div></div>' +
-            '</div>' +
-          '</article>' +
+      '<header class="dm-topbar"><div class="dm-brand"><span class="dm-logo">P</span><div><strong>PROTRADER ANALYSIS</strong><small>Deriv live digit signals</small></div></div>' +
+      '<div class="dm-top-actions"><span class="ou-connection" id="ou-connection"><i></i><b id="ou-connection-text">Connecting to Deriv…</b></span><button id="dm-logout">Log out</button></div></header>' +
+      '<main class="dm-main ou-main">' +
+        '<section class="dm-strategy-strip"><div><span class="dm-kicker">Public market feed</span><strong>Live Deriv tick analysis</strong><small>Volatility · 1-second indices · Jump indices</small></div><div class="dm-strip-rule"><span>Analysis window</span><strong>1,000 ticks</strong><small>Rolling digit frequency</small></div></section>' +
+        '<section class="dm-panel ou-controls">' +
+          '<div class="dm-panel-heading"><div><span class="dm-kicker">Market &amp; strategy</span><h2>Configure entry signal</h2></div><span class="dm-badge" id="ou-feed-badge">WAITING FOR FEED</span></div>' +
+          '<div class="ou-form-grid">' +
+            '<label>MARKET SELECT<select id="ou-market" disabled><option>Loading live markets…</option></select></label>' +
+            '<label>CONTRACT TYPE<select id="ou-contract"><option value="OVER">Over</option><option value="UNDER">Under</option></select></label>' +
+            '<label>DIGIT THRESHOLD<select id="ou-barrier"></select></label>' +
+          '</div>' +
+          '<div class="ou-rule-note"><strong>Your frequency rule</strong><p>Trigger-side digit frequency must be below 10.4%. At least one eligible target digit on the contract-winning side must be at or above 10.5%. The latest live digit must also be on the trigger side.</p></div>' +
+          '<div class="ou-action-row"><button class="dm-activate" id="ou-start" disabled>START ANALYSIS</button><button class="dm-refresh" id="ou-stop" disabled>STOP ANALYSIS</button><span id="ou-sample-status">Waiting for live data…</span></div>' +
         '</section>' +
-        '<section class="dm-results" id="dm-results"><div class="dm-result-totals"><article><span>Total wins</span><strong id="dm-total-wins">0</strong><small>Match found</small></article><article><span>Total losses</span><strong id="dm-total-losses">0</strong><small>Digit not found</small></article><article><span>Settled signals</span><strong id="dm-total-signals">0</strong><small id="dm-result-rate">Waiting for first result</small></article></div><div class="dm-result-list" id="dm-outcomes"><div class="dm-empty-results">Settled signal results will appear here.</div></div></section>' +
+        '<section class="dm-panel ou-signal-panel">' +
+          '<div class="dm-panel-heading"><div><span class="dm-kicker">Live analysis result</span><h2>Entry signal</h2></div><span class="dm-badge" id="ou-signal-state">CONNECTING</span></div>' +
+          '<div class="ou-signal-call" id="ou-signal-call"><span class="ou-pulse"></span><strong id="ou-signal-title">CONNECTING TO DERIV</strong><p id="ou-signal-message">Opening the public live market feed and loading available symbols.</p></div>' +
+          '<div class="ou-metrics"><article><span>Latest digit</span><strong id="ou-last-digit">—</strong><small id="ou-last-price">Waiting for tick</small></article><article><span>Trigger digit frequency</span><strong id="ou-trigger-frequency">—</strong><small id="ou-trigger-label">Selected trigger digit</small></article><article><span>Target digit frequency</span><strong id="ou-target-frequency">—</strong><small id="ou-target-label">Best eligible target</small></article><article><span>Ticks analysed</span><strong id="ou-tick-count">0</strong><small>Rolling sample, max 1,000</small></article></div>' +
+          '<div class="ou-frequency-heading"><strong>Digit frequency · 0–9</strong><small>Observed from live Deriv ticks</small></div>' +
+          '<div class="ou-digit-grid" id="ou-digit-grid">' + Array.from({length:10},function(_,i){return '<div class="ou-digit-cell" data-digit="'+i+'"><b>'+i+'</b><span>—</span><i></i></div>';}).join('') + '</div>' +
+          '<div class="ou-disclaimer">Analysis signal only. No contract is purchased automatically. Frequencies describe the selected sample and do not guarantee the next digit.</div>' +
+        '</section>' +
       '</main></div>';
   }
 
@@ -54,144 +69,299 @@
     } catch (e) { return; }
     document.documentElement.classList.add('dm-strategy-page');
     document.body.classList.add('dm-strategy-app');
-    var root = document.createElement('div'); root.id = 'dm-app-root'; root.innerHTML = template(); document.body.appendChild(root);
-    el('dm-logout').onclick = function () { if (window.matchestoolLogout) window.matchestoolLogout(); location.href = '/'; };
-    el('dm-activate').onclick = activateSignal;
+    var root = document.createElement('div');
+    root.id = 'dm-app-root';
+    root.innerHTML = template();
+    document.body.appendChild(root);
+    el('dm-logout').onclick = function () {
+      if (window.matchestoolLogout) window.matchestoolLogout();
+      location.href = '/';
+    };
+    var barrier = el('ou-barrier');
+    for (var i = 0; i <= 9; i++) barrier.add(new Option(String(i), String(i)));
+    barrier.value = '5';
+    el('ou-market').onchange = function () { loadMarket(el('ou-market').value); };
+    el('ou-contract').onchange = analyse;
+    el('ou-barrier').onchange = analyse;
+    el('ou-start').onclick = function () { state.manualStopped = false; if (state.selectedSymbol && state.connected && !state.subscriptionId) loadMarket(state.selectedSymbol); else analyse(); };
+    el('ou-stop').onclick = function () {
+      state.manualStopped = true;
+      forgetSubscription();
+      setFeed('Analysis stopped', false);
+      el('ou-signal-state').textContent = 'STOPPED';
+      el('ou-signal-title').textContent = 'ANALYSIS STOPPED';
+      el('ou-signal-message').textContent = 'Press START ANALYSIS to resume the live tick stream.';
+      el('ou-start').disabled = !state.connected || !state.selectedSymbol;
+      el('ou-stop').disabled = true;
+    };
     connect();
   }
 
-  function setConnection(text, ok) {
-    var node = el('dm-connection'); if (!node) return;
-    node.classList.toggle('is-live', !!ok); node.querySelector('span').textContent = text;
-  }
-
-  function analysisStage(title, status, progress, step) {
-    var titleEl=el('dm-analysis-title'),statusEl=el('dm-analysis-status'),bar=el('dm-analysis-bar');
-    if(titleEl)titleEl.textContent=title;if(statusEl)statusEl.textContent=status;if(bar)bar.style.width=progress+'%';
-    ['connect','history','compare','lock'].forEach(function(name,index){var node=el('dm-step-'+name);if(node)node.classList.toggle('is-active',index<=step);});
+  function setFeed(text, live) {
+    var node = el('ou-connection');
+    if (!node) return;
+    node.classList.toggle('is-live', !!live);
+    el('ou-connection-text').textContent = text;
   }
 
   function connect() {
-    clearTimeout(state.reconnect); setConnection('Connecting to Deriv', false);
-    try { state.ws = new WebSocket(PUBLIC_WS); } catch (e) { setConnection('Connection unavailable', false); return; }
-    state.ws.onopen = function () { state.connected = true; setConnection('Live', true); analysisStage('Connected to Deriv APIs','Discovering the ten strategy markets…',18,0); send({active_symbols:'brief'}, {type:'symbols'}); };
+    clearTimeout(state.reconnectTimer);
+    setFeed('Connecting to Deriv…', false);
+    try { state.ws = new WebSocket(PUBLIC_WS); }
+    catch (e) {
+      setFeed('WebSocket unavailable', false);
+      el('ou-signal-title').textContent = 'CONNECTION UNAVAILABLE';
+      el('ou-signal-message').textContent = 'Your browser could not open the Deriv public feed. Check the internet connection and reload.';
+      state.reconnectTimer = setTimeout(connect, 4000);
+      return;
+    }
+    state.ws.onopen = function () {
+      state.connected = true;
+      setFeed('Deriv live feed connected', true);
+      el('ou-signal-state').textContent = 'LOADING MARKETS';
+      el('ou-signal-title').textContent = 'DISCOVERING LIVE MARKETS';
+      el('ou-signal-message').textContent = 'Requesting active Volatility, 1-second and Jump symbols from Deriv.';
+      send({active_symbols: 'brief'}, {type:'symbols'});
+    };
     state.ws.onmessage = onMessage;
-    state.ws.onerror = function () { setConnection('Market data error', false); };
-    state.ws.onclose = function () { state.connected = false; setConnection('Reconnecting…', false); state.reconnect = setTimeout(connect, 3500); };
+    state.ws.onerror = function () {
+      setFeed('Market feed error · retrying', false);
+      el('ou-signal-state').textContent = 'FEED ERROR';
+    };
+    state.ws.onclose = function () {
+      state.connected = false;
+      state.subscriptionId = null;
+      setFeed('Disconnected · reconnecting', false);
+      if (el('ou-market')) el('ou-market').disabled = true;
+      state.reconnectTimer = setTimeout(connect, 2500);
+    };
   }
 
   function onMessage(event) {
-    var msg; try { msg = JSON.parse(event.data); } catch (e) { return; }
-    if (msg.error) { console.warn('Deriv:', msg.error.message); return; }
-    var meta = state.req[msg.req_id];
+    var msg;
+    try { msg = JSON.parse(event.data); } catch (e) { return; }
+    var meta = state.requests[msg.req_id] || {};
+    if (msg.error) {
+      console.warn('Deriv public feed:', msg.error.message);
+      if (meta.type === 'symbols') {
+        el('ou-signal-title').textContent = 'MARKET LIST UNAVAILABLE';
+        el('ou-signal-message').textContent = msg.error.message || 'Deriv did not return the active market list.';
+      } else if (meta.type === 'history') {
+        el('ou-signal-title').textContent = 'TICK HISTORY UNAVAILABLE';
+        el('ou-signal-message').textContent = msg.error.message || 'Could not load recent ticks for this market.';
+      }
+      return;
+    }
     if (msg.msg_type === 'active_symbols') discover(msg.active_symbols || []);
-    if (msg.msg_type === 'history' && meta) receiveHistory(meta.symbol, msg);
+    if ((msg.msg_type === 'history' || msg.msg_type === 'candles') && meta.type === 'history') receiveHistory(meta.symbol, msg);
     if (msg.msg_type === 'tick' && msg.tick) receiveTick(msg.tick);
+    if (msg.subscription && msg.subscription.id) state.subscriptionId = msg.subscription.id;
   }
 
-  function discover(symbols) {
-    state.markets = WATCHLIST.map(function (symbol) { return symbols.find(function (m) { return m.symbol === symbol; }); }).filter(Boolean);
-    analysisStage('Markets discovered','Preparing 1,000 historical ticks for each market…',30,1);
-    scanHistories();
-  }
-
-  function scanHistories() {
-    if (!state.connected || !state.markets.length) return;
-    state.scanned = 0; state.data = {}; state.req = {}; state.signal = null; state.displayReady = false;
-    analysisStage('Loading tick intelligence','Analysing 0 of '+state.markets.length+' markets…',32,1);
-    showSignal(null);
-    state.markets.forEach(function (m, index) {
-      setTimeout(function () { send({ticks_history:m.symbol, end:'latest', count:SAMPLE_SIZE, style:'ticks'}, {type:'history', symbol:m.symbol}); }, Math.floor(index / 6) * 220);
+  function discover(rawSymbols) {
+    var mapped = rawSymbols.map(function (m) {
+      return {
+        raw: m,
+        symbol: symbolOf(m),
+        name: nameOf(m),
+        market: m.market || m.market_display_name || '',
+        type: m.underlying_symbol_type || m.symbol_type || ''
+      };
+    }).filter(function (m) {
+      if (!m.symbol) return false;
+      var hay = (m.symbol + ' ' + m.name + ' ' + m.market + ' ' + m.type).toLowerCase();
+      return /volatility|\b1\s*second|\b1s\b|jump/.test(hay) ||
+        /^(R_\d+|1HZ\w+|JD\w*|JUMP\w*)$/i.test(m.symbol);
+    }).sort(function (a,b) {
+      function group(m) {
+        var s=(m.symbol+' '+m.name).toLowerCase();
+        return /jump|^jd/.test(s) ? 2 : (/1hz|1 second|1s/.test(s) ? 1 : 0);
+      }
+      return group(a)-group(b) || a.name.localeCompare(b.name);
     });
+    var unique = {};
+    state.markets = mapped.filter(function (m) {
+      if (unique[m.symbol]) return false;
+      unique[m.symbol] = true;
+      return true;
+    });
+    var select = el('ou-market');
+    select.innerHTML = '';
+    if (!state.markets.length) {
+      select.add(new Option('No matching live markets returned', ''));
+      select.disabled = true;
+      el('ou-signal-title').textContent = 'NO MARKETS FOUND';
+      el('ou-signal-message').textContent = 'Deriv returned no matching Volatility, 1-second or Jump symbols. Reconnect or try again later.';
+      el('ou-signal-state').textContent = 'NO MARKETS';
+      return;
+    }
+    state.markets.forEach(function (m) {
+      var label = m.name + ' (' + m.symbol + ')';
+      select.add(new Option(label, m.symbol));
+    });
+    var preferred = state.markets.find(function (m) { return m.symbol === '1HZ100V'; }) ||
+      state.markets.find(function (m) { return m.symbol === 'R_100'; }) || state.markets[0];
+    select.value = preferred.symbol;
+    select.disabled = false;
+    el('ou-start').disabled = false;
+    loadMarket(preferred.symbol);
+  }
+
+  function forgetSubscription() {
+    if (state.subscriptionId && state.connected) send({forget: state.subscriptionId});
+    state.subscriptionId = null;
+  }
+
+  function loadMarket(symbol) {
+    if (!symbol || !state.connected) return;
+    forgetSubscription();
+    state.selectedSymbol = symbol;
+    state.samples = [];
+    state.sampleReady = false;
+    state.signal = null;
+    state.lastDigit = null;
+    state.manualStopped = false;
+    el('ou-market').value = symbol;
+    el('ou-feed-badge').textContent = 'LOADING TICKS';
+    el('ou-signal-state').textContent = 'ANALYSING';
+    el('ou-signal-title').textContent = 'LOADING LIVE TICK HISTORY';
+    el('ou-signal-message').textContent = 'Loading up to 1,000 recent ticks for ' + symbol + '.';
+    el('ou-last-digit').textContent = '—';
+    el('ou-last-price').textContent = 'Waiting for tick';
+    el('ou-tick-count').textContent = '0';
+    el('ou-sample-status').textContent = 'Loading recent ticks…';
+    el('ou-start').disabled = true;
+    el('ou-stop').disabled = false;
+    var market = state.markets.find(function (m) { return m.symbol === symbol; });
+    send({ticks_history: symbol, end: 'latest', count: SAMPLE_SIZE, style: 'ticks'}, {type:'history', symbol:symbol, market:market});
+  }
+
+  function inferPip(prices) {
+    var max = 0;
+    (prices || []).slice(-100).forEach(function (p) {
+      var s = String(p);
+      max = Math.max(max, (s.split('.')[1] || '').length);
+    });
+    return Math.min(8, Math.max(0, max));
+  }
+
+  function getDigit(price, pip) {
+    var fixed = Number(price).toFixed(Math.max(0, Math.min(8, Number(pip) || 0)));
+    return Number(fixed.charAt(fixed.length - 1));
   }
 
   function receiveHistory(symbol, msg) {
-    var m = state.markets.find(function (x) { return x.symbol === symbol; });
-    var prices = msg.history && msg.history.prices || []; var pip = Number(msg.pip_size);
-    state.data[symbol] = { market:m, prices:prices.slice(-SAMPLE_SIZE), pip:isFinite(pip) ? pip : inferPip(prices), latest:null };
-    state.scanned++;
-    analysisStage('Loading tick intelligence','Analysing '+state.scanned+' of '+state.markets.length+' markets…',32+Math.round((state.scanned/state.markets.length)*43),1);
-    rank();
-    if (state.scanned === state.markets.length) {
-      subscribeAll(); analysisStage('Comparing digit strength','Ranking 10,000 observations across all markets…',84,2);
-      setTimeout(function(){analysisStage('Locking the signal','Freezing the market, target digit, and 1-minute window…',96,3);},700);
-      setTimeout(function(){analysisStage('Signal ready','The selected setup is now locked for 1 minute.',100,3);state.displayReady=true;showSignal(state.signal);activateSignal();},1600);
+    if (symbol !== state.selectedSymbol) return;
+    var history = msg.history || {};
+    var prices = history.prices || [];
+    if (!prices.length) {
+      el('ou-signal-title').textContent = 'NO TICK HISTORY';
+      el('ou-signal-message').textContent = 'Deriv returned no recent prices for ' + symbol + '. Select another market.';
+      el('ou-signal-state').textContent = 'NO DATA';
+      el('ou-start').disabled = false;
+      el('ou-sample-status').textContent = 'No historical ticks received.';
+      return;
     }
+    state.pip = Number(msg.pip_size != null ? msg.pip_size : (msg.tick && msg.tick.pip_size != null ? msg.tick.pip_size : inferPip(prices)));
+    state.samples = prices.slice(-SAMPLE_SIZE).map(function (p) { return Number(p); }).filter(Number.isFinite);
+    state.sampleReady = true;
+    el('ou-feed-badge').textContent = 'LIVE ANALYSIS';
+    el('ou-signal-state').textContent = 'WAITING FOR SETUP';
+    el('ou-sample-status').textContent = state.samples.length.toLocaleString() + ' historical ticks loaded; waiting for live updates.';
+    el('ou-start').disabled = false;
+    send({ticks: symbol, subscribe: 1}, {type:'ticks', symbol:symbol});
+    analyse();
   }
 
-  function inferPip(prices) { var max = 2; (prices || []).slice(-20).forEach(function (p) { var s=String(p); max=Math.max(max,(s.split('.')[1]||'').length); }); return max; }
-  function lastDigit(price, pip) { var s = Number(price).toFixed(Math.max(0, Number(pip) || 0)); return Number(s.charAt(s.length - 1)); }
-  function analyse(entry) {
-    var counts = [0,0,0,0,0,0,0,0,0,0]; entry.prices.forEach(function (p) { counts[lastDigit(p, entry.pip)]++; });
-    var best = 0; for (var i=1;i<10;i++) if (counts[i] > counts[best]) best=i;
-    var n=entry.prices.length, frequency=n ? counts[best]/n*100 : 0;
-    return {entry:entry, counts:counts, digit:best, count:counts[best], sample:n, frequency:frequency, edge:frequency-10};
-  }
-
-  function ranked() { return Object.keys(state.data).map(function (k) { return analyse(state.data[k]); }).filter(function (x) { return x.sample >= 100; }).sort(function (a,b) { return b.frequency-a.frequency || b.sample-a.sample; }); }
-  function rank() {
-    if (state.active) return;
-    var rows = ranked(), selected = rows[0] || null;
-    if (selected && selected.entry.market.symbol===state.lastSignalSymbol && state.consecutiveSignals>=3) {
-      selected = rows.find(function(row){return row.entry.market.symbol!==state.lastSignalSymbol;}) || rows[1] || selected;
-    }
-    state.signal = selected; if(state.displayReady)showSignal(state.signal);
-  }
-
-  function showSignal(signal) {
-    if (!el('dm-signal')) return;
-    el('dm-signal-empty').hidden=!!signal; el('dm-signal').hidden=!signal; el('dm-signal-state').textContent=state.active?'ACTIVE':(signal?'READY':'SCANNING');
-    if (!signal) return;
-    el('dm-signal-market').textContent=marketName(signal.entry.market); el('dm-signal-symbol').textContent=signal.entry.market.symbol;
-    el('dm-signal-digit').textContent=signal.digit; el('dm-signal-frequency').textContent=pct(signal.frequency);
-    el('dm-signal-occurrences').textContent=signal.count+' times'; el('dm-signal-sample').textContent=signal.sample.toLocaleString()+' ticks'; el('dm-edge').textContent='+'+pct(signal.edge);
-    el('dm-edge-bar').style.width=Math.min(100,Math.max(4,signal.edge*18))+'%';
-  }
-
-  function subscribeAll() { var symbols=state.markets.map(function (m) { return m.symbol; }); if (symbols.length) send({ticks:symbols,subscribe:1},{type:'ticks'}); }
   function receiveTick(tick) {
-    var entry=state.data[tick.symbol]; if (!entry) return; var digit=lastDigit(tick.quote,tick.pip_size == null ? entry.pip : tick.pip_size);
-    entry.latest=Number(tick.quote).toFixed(tick.pip_size == null ? entry.pip : tick.pip_size); entry.prices.push(tick.quote); if(entry.prices.length>SAMPLE_SIZE) entry.prices.shift();
-    if (state.active && state.active.symbol===tick.symbol) observeDigit(digit,tick.epoch);
-    rank();
+    var symbol = tick.symbol || tick.underlying_symbol;
+    if (!symbol || symbol !== state.selectedSymbol || state.manualStopped) return;
+    var quote = Number(tick.quote);
+    if (!Number.isFinite(quote)) return;
+    if (tick.pip_size != null) state.pip = Number(tick.pip_size);
+    state.samples.push(quote);
+    if (state.samples.length > SAMPLE_SIZE) state.samples.shift();
+    state.lastDigit = getDigit(quote, state.pip);
+    el('ou-last-digit').textContent = String(state.lastDigit);
+    el('ou-last-price').textContent = quote.toFixed(state.pip) + ' · ' + clock(tick.epoch);
+    el('ou-tick-count').textContent = state.samples.length.toLocaleString();
+    el('ou-sample-status').textContent = 'Live tick received at ' + clock(tick.epoch);
+    analyse();
   }
 
-  function observeDigit(digit, epoch) {
-    if (!state.active) return;
-    state.active.digits.push({digit:digit,epoch:epoch});
-    if (digit === state.active.digit) { state.active.matched = true; state.active.matchCount++; }
-    var stream = el('dm-live-digits');
-    if (stream) stream.innerHTML = state.active.digits.slice(-16).map(function (item) { return '<b class="'+(item.digit===state.active.digit?'is-match':'')+'">'+item.digit+'</b>'; }).join('');
-    var status = el('dm-match-status');
-    if (status && state.active.matched) { status.textContent='MATCH FOUND × '+state.active.matchCount; status.classList.add('is-win'); }
+  function getStats() {
+    var counts = Array(10).fill(0);
+    state.samples.forEach(function (price) { counts[getDigit(price, state.pip)]++; });
+    var total = state.samples.length;
+    return {
+      counts: counts,
+      freq: counts.map(function (n) { return total ? n / total * 100 : 0; }),
+      total: total
+    };
   }
 
-  function activateSignal() {
-    if (!state.signal || state.active) return; var s=state.signal;
-    if (s.entry.market.symbol===state.lastSignalSymbol) state.consecutiveSignals++;
-    else { state.lastSignalSymbol=s.entry.market.symbol; state.consecutiveSignals=1; }
-    state.active={symbol:s.entry.market.symbol,market:marketName(s.entry.market),digit:s.digit,frequency:s.frequency,started:Date.now(),expires:Date.now()+SIGNAL_TTL*1000,digits:[],matched:false,matchCount:0};
-    el('dm-activate').disabled=true; el('dm-active-trade').hidden=false; el('dm-active-digit').textContent=s.digit; el('dm-active-market').textContent=marketName(s.entry.market); el('dm-signal-state').textContent='LOCKED · 60S';
-    el('dm-live-digits').innerHTML='<span>Waiting for live ticks…</span>'; el('dm-match-status').textContent='WAITING FOR MATCH'; el('dm-match-status').classList.remove('is-win');
-    clearInterval(state.signalTimer); state.signalTimer=setInterval(function(){ var left=Math.max(0,Math.ceil((state.active.expires-Date.now())/1000)); el('dm-countdown').textContent=left; if(left<=0) finishSignal(state.active.matched?'WIN':'LOSS',state.active.digits.length?state.active.digits[state.active.digits.length-1].digit:null,Date.now()/1000); },250);
+  function analyse() {
+    if (!el('ou-contract')) return;
+    var stats = getStats();
+    var type = el('ou-contract').value;
+    var barrier = Number(el('ou-barrier').value);
+    var current = state.lastDigit;
+    var triggerSide = function (d) { return type === 'OVER' ? d <= barrier : d >= barrier; };
+    var targetSide = function (d) { return type === 'OVER' ? d > barrier : d < barrier; };
+    var eligibleTargets = [];
+    for (var d = 0; d <= 9; d++) {
+      if (targetSide(d) && stats.freq[d] >= HIGH_DIGIT_LIMIT) eligibleTargets.push(d);
+    }
+    eligibleTargets.sort(function (a,b) { return stats.freq[b]-stats.freq[a]; });
+    var triggerFreq = current == null ? null : stats.freq[current];
+    var triggerOK = current != null && triggerSide(current) && triggerFreq < LOW_DIGIT_LIMIT;
+    var ready = stats.total >= 100 && triggerOK && eligibleTargets.length > 0 && !state.manualStopped;
+    var signalText = 'BUY ' + type + ' ' + barrier;
+    var bestTarget = eligibleTargets.length ? eligibleTargets[0] : null;
+    renderFrequencies(stats, type, barrier, current, bestTarget);
+    el('ou-trigger-frequency').textContent = triggerFreq == null ? '—' : pct(triggerFreq);
+    el('ou-trigger-label').textContent = current == null ? 'Waiting for current digit' : 'Digit ' + current + (triggerOK ? ' qualifies' : ' does not qualify');
+    el('ou-target-frequency').textContent = bestTarget == null ? '—' : pct(stats.freq[bestTarget]);
+    el('ou-target-label').textContent = bestTarget == null ? 'No target at 10.5%+' : 'Target digit ' + bestTarget + (eligibleTargets.length > 1 ? ' (+' + (eligibleTargets.length - 1) + ' more)' : '');
+    if (!state.sampleReady) return;
+    if (state.manualStopped) {
+      el('ou-signal-state').textContent = 'STOPPED';
+      return;
+    }
+    if (ready) {
+      state.signal = {type:type, barrier:barrier, trigger:current, triggerFrequency:triggerFreq, target:bestTarget, targetFrequency:stats.freq[bestTarget], time:Date.now()};
+      el('ou-signal-state').textContent = 'SIGNAL READY';
+      el('ou-signal-title').textContent = signalText;
+      el('ou-signal-message').textContent = 'Live trigger digit ' + current + ' is ' + pct(triggerFreq) + ' (below 10.4%). Target digit ' + bestTarget + ' is ' + pct(stats.freq[bestTarget]) + ' (at least 10.5%) in the last ' + stats.total + ' ticks.';
+      el('ou-signal-call').classList.add('is-signal');
+      el('ou-feed-badge').textContent = 'SIGNAL CONDITION MET';
+    } else {
+      state.signal = null;
+      el('ou-signal-state').textContent = stats.total < 100 ? 'BUILDING SAMPLE' : 'WAITING FOR SETUP';
+      el('ou-signal-title').textContent = 'WAITING FOR SIGNAL';
+      var why = stats.total < 100 ? 'Collecting enough live tick data before evaluating the rule.' :
+        current == null ? 'Waiting for the next live tick.' :
+        !triggerSide(current) ? 'Latest digit ' + current + ' is not on the trigger side for ' + type + ' ' + barrier + '.' :
+        !(triggerFreq < LOW_DIGIT_LIMIT) ? 'Latest digit frequency is ' + pct(triggerFreq) + '; it must be below 10.4%.' :
+        'No eligible target digit on the winning side is at or above 10.5% yet.';
+      el('ou-signal-message').textContent = why;
+      el('ou-signal-call').classList.remove('is-signal');
+      el('ou-feed-badge').textContent = 'LIVE ANALYSIS';
+    }
   }
 
-  function finishSignal(result, actual, epoch) {
-    if(!state.active)return; var a=state.active; clearInterval(state.signalTimer);
-    state.outcomes.unshift({result:result,market:a.market,symbol:a.symbol,target:a.digit,actual:actual,time:nowTime(epoch),frequency:a.frequency,matchCount:a.matchCount}); state.outcomes=state.outcomes.slice(0,20); state.active=null;
-    if(result==='WIN')state.totalWins++;else if(result==='LOSS')state.totalLosses++;
-    el('dm-activate').disabled=false; el('dm-signal-state').textContent=result; renderOutcomes();
-    el('dm-active-trade').classList.add(result==='WIN'?'is-settled-win':'is-settled-loss');
-    setTimeout(function(){ if(el('dm-active-trade')){el('dm-active-trade').hidden=true;el('dm-active-trade').classList.remove('is-settled-win','is-settled-loss');} if(el('dm-signal-state'))el('dm-signal-state').textContent='ANALYSING'; state.displayReady=false; showSignal(null); analysisStage('Refreshing market analysis','Reviewing the latest rolling tick samples…',55,2); setTimeout(function(){rank();analysisStage('Locking the next signal','Freezing the strongest current setup…',96,3);setTimeout(function(){state.displayReady=true;showSignal(state.signal);activateSignal();},700);},900); },2200);
-  }
-
-  function renderOutcomes() {
-    var wins=state.totalWins, losses=state.totalLosses;
-    var totalWins=el('dm-total-wins'),totalLosses=el('dm-total-losses'),totalSignals=el('dm-total-signals'),resultRate=el('dm-result-rate');
-    if(totalWins)totalWins.textContent=wins;if(totalLosses)totalLosses.textContent=losses;if(totalSignals)totalSignals.textContent=wins+losses;
-    if(resultRate)resultRate.textContent=(wins+losses)?Math.round(wins/(wins+losses)*100)+'% win rate':'Waiting for first result';
-    var record=el('dm-record'),rate=el('dm-win-rate'); if(record)record.textContent=wins+'W · '+losses+'L'; if(rate)rate.textContent=(wins+losses)?Math.round(wins/(wins+losses)*100)+'% match rate':'No settled outcomes yet';
-    var list=el('dm-outcomes'); if(list) list.innerHTML=state.outcomes.length?state.outcomes.map(function(o){var count=Number(o.matchCount||0);return '<div class="dm-result-item"><span class="dm-result-icon '+o.result.toLowerCase()+'">'+(o.result==='WIN'?'✓':'×')+'</span><div><strong>'+esc(o.market)+'</strong><small>Prediction '+o.target+' appeared '+count+' '+(count===1?'time':'times')+' within 1 minute · '+o.time+'</small></div><b class="'+o.result.toLowerCase()+'">'+(o.result==='WIN'?'MATCH FOUND':'NOT FOUND')+'</b></div>';}).join(''):'<div class="dm-empty-results">Settled signal results will appear here.</div>';
+  function renderFrequencies(stats, type, barrier, current, bestTarget) {
+    var cells = document.querySelectorAll('.ou-digit-cell');
+    Array.prototype.forEach.call(cells, function (cell) {
+      var d = Number(cell.getAttribute('data-digit'));
+      var f = stats.freq[d] || 0;
+      cell.querySelector('span').textContent = stats.total ? pct(f) : '—';
+      cell.querySelector('i').style.height = Math.min(100, f * 5) + '%';
+      cell.classList.toggle('is-trigger', current === d && (type === 'OVER' ? d <= barrier : d >= barrier));
+      cell.classList.toggle('is-target', bestTarget === d);
+      cell.classList.toggle('is-winning-side', type === 'OVER' ? d > barrier : d < barrier);
+      cell.classList.toggle('is-low-frequency', f < LOW_DIGIT_LIMIT && stats.total >= 100);
+    });
   }
 
   window.addEventListener('load', function () { setTimeout(mount, 120); });
