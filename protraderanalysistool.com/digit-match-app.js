@@ -109,7 +109,7 @@
       })
       .then(function (data) {
         derivAppId = String(data.appId || '').trim();
-        if (!/^\d+$/.test(derivAppId)) throw new Error('DERIV_APP_ID must be your numeric Deriv App ID.');
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(derivAppId)) throw new Error('DERIV_APP_ID has an unsupported format. Check your registered Deriv application.');
         var encodedId = encodeURIComponent(derivAppId);
         PUBLIC_WS_ENDPOINTS = [
           'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId,
@@ -122,7 +122,7 @@
         setFeed('Deriv App ID not configured', false);
         el('ou-signal-state').textContent = 'CONFIGURATION REQUIRED';
         el('ou-signal-title').textContent = 'ADD YOUR DERIV APP ID';
-        el('ou-signal-message').textContent = (error && error.message ? error.message : 'Unable to load the saved Deriv App ID.') + ' Add DERIV_APP_ID in Vercel Settings → Environment Variables, then redeploy.';
+        el('ou-signal-message').textContent = (error && error.message ? error.message : 'Unable to load the saved Deriv App ID.') + ' Check DERIV_APP_ID in Vercel Settings → Environment Variables, then redeploy.';
         state.reconnectTimer = setTimeout(loadDerivConfig, 5000);
       });
   }
