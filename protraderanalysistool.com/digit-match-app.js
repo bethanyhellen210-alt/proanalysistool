@@ -165,7 +165,6 @@
       clearInterval(state.heartbeatTimer);
       clearTimeout(state.feedTimeout);
       clearTimeout(state.connectTimeout);
-      clearInterval(state.heartbeatTimer);
       state.connected = false;
       state.subscriptionId = null;
       state.endpointIndex = (state.endpointIndex + 1) % PUBLIC_WS_ENDPOINTS.length;
@@ -190,7 +189,8 @@
         clearTimeout(state.feedTimeout);
         setFeed('Deriv rejected market request', false);
         el('ou-signal-title').textContent = 'MARKET LIST UNAVAILABLE';
-        el('ou-signal-message').textContent = msg.error.message || 'Deriv did not return the active market list.';
+        el('ou-signal-message').textContent = (msg.error.message || 'Deriv did not return the active market list.') + ' Switching public endpoints automatically.';
+        if (state.ws && state.ws.readyState === 1) state.ws.close();
       } else if (meta.type === 'history') {
         el('ou-signal-title').textContent = 'TICK HISTORY UNAVAILABLE';
         el('ou-signal-message').textContent = msg.error.message || 'Could not load recent ticks for this market.';
