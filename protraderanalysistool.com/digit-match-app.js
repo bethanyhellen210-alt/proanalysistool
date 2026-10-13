@@ -2,11 +2,8 @@
   'use strict';
 
   // Public Deriv market data only. This page never places trades or requests an account token.
-  var PUBLIC_WS_ENDPOINTS = [
-    'wss://ws.derivws.com/websockets/v3?app_id=1089',
-    'wss://ws.binaryws.com/websockets/v3?app_id=1089',
-    'wss://ws.derivws.com/websockets/v3?app_id=1089&l=EN'
-  ];
+  var PUBLIC_WS_ENDPOINTS = [];
+  var derivAppId = '';
   var SAMPLE_SIZE = 1000;
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
@@ -99,7 +96,35 @@
       el('ou-start').disabled = !state.connected || !state.selectedSymbol;
       el('ou-stop').disabled = true;
     };
-    connect();
+    loadDerivConfig();
+  }
+
+  function loadDerivConfig() {
+    fetch('/api/deriv-config', { cache: 'no-store' })
+      .then(function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok) throw new Error(data.error || 'Could not load Deriv App ID configuration.');
+          return data;
+        });
+      })
+      .then(function (data) {
+        derivAppId = String(data.appId || '').trim();
+        if (!/^\\d+$/.test(derivAppId)) throw new Error('DERIV_APP_ID must be your numeric Deriv App ID.');
+        var encodedId = encodeURIComponent(derivAppId);
+        PUBLIC_WS_ENDPOINTS = [
+          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId,
+          'wss://ws.binaryws.com/websockets/v3?app_id=' + encodedId,
+          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId + '&l=EN'
+        ];
+        connect();
+      })
+      .catch(function (error) {
+        setFeed('Deriv App ID not configured', false);
+        el('ou-signal-state').textContent = 'CONFIGURATION REQUIRED';
+        el('ou-signal-title').textContent = 'ADD YOUR DERIV APP ID';
+        el('ou-signal-message').textContent = (error && error.message ? error.message : 'Unable to load the saved Deriv App ID.') + ' Add DERIV_APP_ID in Vercel Settings → Environment Variables, then redeploy.';
+        state.reconnectTimer = setTimeout(loadDerivConfig, 5000);
+      });
   }
 
   function setFeed(text, live) {
