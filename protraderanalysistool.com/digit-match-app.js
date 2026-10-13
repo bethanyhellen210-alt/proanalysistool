@@ -7,7 +7,7 @@
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
   var state = {
-    ws: null, connected: false, reconnectTimer: null, feedTimeout: null, requestId: 0, requests: {}, endpointIndex: 0,
+    ws: null, connected: false, reconnectTimer: null, feedTimeout: null, requestId: 0, requests: {}, endpointIndex: 0, marketResponse: false,
     markets: [], selectedSymbol: '', samples: [], pip: 2, subscriptionId: null,
     lastDigit: null, signal: null, sampleReady: false, manualStopped: false
   };
@@ -122,9 +122,10 @@
       el('ou-signal-state').textContent = 'LOADING MARKETS';
       el('ou-signal-title').textContent = 'DISCOVERING LIVE MARKETS';
       el('ou-signal-message').textContent = 'Requesting active Volatility, 1-second and Jump symbols from Deriv.';
+      state.marketResponse = false;
       send({active_symbols: 'brief'}, {type:'symbols'});
       state.feedTimeout = setTimeout(function () {
-        if (state.connected && (!state.markets || !state.markets.length)) {
+        if (state.connected && !state.marketResponse) {
           setFeed('No market response · switching feed', false);
           if (state.ws && state.ws.readyState === 1) state.ws.close();
         }
@@ -182,6 +183,7 @@
   }
 
   function discover(rawSymbols) {
+    state.marketResponse = true;
     clearTimeout(state.feedTimeout);
     var mapped = rawSymbols.map(function (m) {
       return {
@@ -212,7 +214,7 @@
       el('ou-signal-title').textContent = 'NO ACTIVE MARKETS';
       el('ou-signal-message').textContent = 'Deriv connected but returned an empty market list. The app will retry automatically.';
       el('ou-signal-state').textContent = 'NO MARKETS';
-      state.reconnectTimer = setTimeout(connect, 3500);
+      if (state.ws && state.ws.readyState === 1) state.ws.close();
       return;
     }
 
