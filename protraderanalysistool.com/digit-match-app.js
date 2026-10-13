@@ -2,7 +2,7 @@
   'use strict';
 
   // Public Deriv market data only. This page never places trades or requests an account token.
-  var PUBLIC_WS = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
+  var PUBLIC_WS = 'wss://ws.binaryws.com/websockets/v3';
   var SAMPLE_SIZE = 1000;
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
