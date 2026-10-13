@@ -111,13 +111,13 @@
         derivAppId = String(data.appId || '').trim();
         if (!/^[A-Za-z0-9_-]{1,128}$/.test(derivAppId)) throw new Error('DERIV_APP_ID has an unsupported format. Check your registered Deriv application.');
         var encodedId = encodeURIComponent(derivAppId);
-        // Public market-data endpoints do not require account authentication.
-        // Try the no-app-id public URLs first so an unsupported/rotated identifier
-        // cannot prevent read-only live ticks from connecting.
+        // The legacy v3 public WebSocket API requires a numeric registered App ID.
+        // The supplied mixed-format value is not treated as a valid v3 App ID.
+        // Keep the public feed on the documented v3 endpoint and expose connection
+        // errors instead of cycling endpoints that cannot fix an invalid App ID.
         PUBLIC_WS_ENDPOINTS = [
-          'wss://ws.derivws.com/websockets/v3',
-          'wss://ws.binaryws.com/websockets/v3',
-          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId
+          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId,
+          'wss://ws.binaryws.com/websockets/v3?app_id=' + encodedId
         ];
         connect();
       })
