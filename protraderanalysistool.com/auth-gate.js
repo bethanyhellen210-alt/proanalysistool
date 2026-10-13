@@ -8,8 +8,8 @@
 
   // ---- CONFIG ----
   // No reusable access key or administrator password is stored in browser code.
-  var CONTACT_URL   = 'https://wa.me/254722713111';
-  var CONTACT_LABEL = '0722 713 111';
+  var CONTACT_URL   = 'https://wa.me/254701859605';
+  var CONTACT_LABEL = '254701859605';
   var SESSION_KEY   = 'matchestool_session';
   var AUTH_LOCK_TIMER = null;
   var AUTH_LOCK_OBSERVER = null;
