@@ -2,7 +2,7 @@
   'use strict';
 
   // Public Deriv market data only. This page never places trades or requests an account token.
-  var PUBLIC_WS_ENDPOINTS = ['wss://ws.binaryws.com/websockets/v3', 'wss://ws.derivws.com/websockets/v3?app_id=1089'];
+  var PUBLIC_WS_ENDPOINTS = ['wss://ws.derivws.com/websockets/v3?app_id=1089', 'wss://ws.binaryws.com/websockets/v3?app_id=1089'];
   var SAMPLE_SIZE = 1000;
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
@@ -118,13 +118,14 @@
     }
     state.ws.onopen = function () {
       clearTimeout(state.feedTimeout);
+      clearTimeout(state.connectTimeout);
       state.connected = true;
       setFeed('Deriv live feed connected', true);
       el('ou-signal-state').textContent = 'LOADING MARKETS';
       el('ou-signal-title').textContent = 'DISCOVERING LIVE MARKETS';
       el('ou-signal-message').textContent = 'Requesting active Volatility, 1-second and Jump symbols from Deriv.';
       state.marketResponse = false;
-      send({active_symbols: 'brief'}, {type:'symbols'});
+      send({active_symbols: 'brief', product_type: 'basic'}, {type:'symbols'});
       state.feedTimeout = setTimeout(function () {
         if (state.connected && !state.marketResponse) {
           setFeed('No market response · switching feed', false);
@@ -133,20 +134,27 @@
       }, 9000);
     };
     state.ws.onmessage = onMessage;
+    state.connectTimeout = setTimeout(function () {
+      if (state.ws && state.ws.readyState !== 1) {
+        setFeed('Connection timed out · retrying', false);
+        try { state.ws.close(); } catch (e) {}
+      }
+    }, 10000);
     state.ws.onerror = function () {
       setFeed('Market feed error · retrying', false);
       el('ou-signal-state').textContent = 'FEED ERROR';
     };
     state.ws.onclose = function (event) {
       clearTimeout(state.feedTimeout);
+      clearTimeout(state.connectTimeout);
       state.connected = false;
       state.subscriptionId = null;
       state.endpointIndex = (state.endpointIndex + 1) % PUBLIC_WS_ENDPOINTS.length;
       var closeInfo = event && event.code ? ' (code ' + event.code + ')' : '';
-      setFeed('Disconnected' + closeInfo + ' · trying alternate feed', false);
+      setFeed('Disconnected' + closeInfo + ' · retrying public feed', false);
       if (el('ou-market')) el('ou-market').disabled = true;
       if (el('ou-signal-title')) el('ou-signal-title').textContent = 'RECONNECTING TO DERIV';
-      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'The connection closed. Trying the alternate public Deriv WebSocket endpoint automatically.';
+      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before live data arrived. Retrying the other public endpoint automatically. If both fail, check whether your network or browser blocks WebSockets.';
       state.reconnectTimer = setTimeout(connect, 1800);
     };
   }
