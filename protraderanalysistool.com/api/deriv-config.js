@@ -6,10 +6,12 @@ module.exports = (req, res) => {
     res.status(405).end(JSON.stringify({ error: 'Use GET.' }));
     return;
   }
-  const appId = String(process.env.DERIV_APP_ID || '').trim();
-  if (!/^\d+$/.test(appId)) {
+
+  // Use the supplied updated identifier by default; Vercel can override it with DERIV_APP_ID.
+  const appId = String(process.env.DERIV_APP_ID || '34EWiRFsKNgMMfSbjXawQ').trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(appId)) {
     res.status(503).end(JSON.stringify({
-      error: 'DERIV_APP_ID is missing or invalid. Add your numeric Deriv App ID in Vercel Environment Variables and redeploy.'
+      error: 'DERIV_APP_ID is missing or has an unsupported format. Check the App ID shown for your registered Deriv application.'
     }));
     return;
   }
