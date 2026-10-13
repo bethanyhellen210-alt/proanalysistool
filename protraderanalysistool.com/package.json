@@ -1,0 +1,9 @@
+{
+  "name": "proanalysistool-access-api",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Server-side access-key API for Vercel using Neon PostgreSQL",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  }
+}
