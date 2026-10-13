@@ -2,12 +2,16 @@
   'use strict';
 
   // Public Deriv market data only. This page never places trades or requests an account token.
-  var PUBLIC_WS_ENDPOINTS = ['wss://ws.derivws.com/websockets/v3?app_id=1089', 'wss://ws.binaryws.com/websockets/v3?app_id=1089'];
+  var PUBLIC_WS_ENDPOINTS = [
+    'wss://ws.derivws.com/websockets/v3?app_id=1089',
+    'wss://ws.binaryws.com/websockets/v3',
+    'wss://ws.binaryws.com/websockets/v3?app_id=1089'
+  ];
   var SAMPLE_SIZE = 1000;
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
   var state = {
-    ws: null, connected: false, reconnectTimer: null, feedTimeout: null, requestId: 0, requests: {}, endpointIndex: 0, marketResponse: false,
+    ws: null, connected: false, reconnectTimer: null, feedTimeout: null, connectTimeout: null, heartbeatTimer: null, requestId: 0, requests: {}, endpointIndex: 0, marketResponse: false,
     markets: [], selectedSymbol: '', samples: [], pip: 2, subscriptionId: null,
     lastDigit: null, signal: null, sampleReady: false, manualStopped: false
   };
@@ -107,8 +111,15 @@
 
   function connect() {
     clearTimeout(state.reconnectTimer);
+    clearTimeout(state.feedTimeout);
+    clearTimeout(state.connectTimeout);
+    clearInterval(state.heartbeatTimer);
+    state.connected = false;
+    state.marketResponse = false;
     setFeed('Connecting to Deriv…', false);
-    try { state.ws = new WebSocket(PUBLIC_WS_ENDPOINTS[state.endpointIndex % PUBLIC_WS_ENDPOINTS.length]); }
+    var endpoint = PUBLIC_WS_ENDPOINTS[state.endpointIndex % PUBLIC_WS_ENDPOINTS.length];
+    var socket;
+    try { socket = new WebSocket(endpoint); state.ws = socket; }
     catch (e) {
       setFeed('WebSocket unavailable', false);
       el('ou-signal-title').textContent = 'CONNECTION UNAVAILABLE';
@@ -116,42 +127,50 @@
       state.reconnectTimer = setTimeout(connect, 4000);
       return;
     }
-    state.ws.onopen = function () {
+    socket.onopen = function () {
+      if (state.ws !== socket) return;
       clearTimeout(state.feedTimeout);
       clearTimeout(state.connectTimeout);
-      state.connected = true;
-      setFeed('Deriv live feed connected', true);
+      setFeed('Socket open · requesting Deriv data', false);
       el('ou-signal-state').textContent = 'LOADING MARKETS';
       el('ou-signal-title').textContent = 'DISCOVERING LIVE MARKETS';
       el('ou-signal-message').textContent = 'Requesting active Volatility, 1-second and Jump symbols from Deriv.';
       state.marketResponse = false;
       send({active_symbols: 'brief', product_type: 'basic'}, {type:'symbols'});
+      state.heartbeatTimer = setInterval(function () {
+        if (state.ws === socket && socket.readyState === 1) send({ping: 1}, {type:'ping'});
+      }, 20000);
       state.feedTimeout = setTimeout(function () {
-        if (state.connected && !state.marketResponse) {
-          setFeed('No market response · switching feed', false);
-          if (state.ws && state.ws.readyState === 1) state.ws.close();
+        if (state.ws === socket && !state.marketResponse) {
+          setFeed('No Deriv response · switching endpoint', false);
+          try { socket.close(); } catch (e) {}
         }
       }, 9000);
     };
-    state.ws.onmessage = onMessage;
+    socket.onmessage = function (event) { if (state.ws === socket) onMessage(event); };
     state.connectTimeout = setTimeout(function () {
-      if (state.ws && state.ws.readyState !== 1) {
+      if (state.ws === socket && socket.readyState !== 1) {
         setFeed('Connection timed out · retrying', false);
-        try { state.ws.close(); } catch (e) {}
+        try { socket.close(); } catch (e) {}
       }
     }, 10000);
-    state.ws.onerror = function () {
-      setFeed('Market feed error · retrying', false);
+    socket.onerror = function () {
+      if (state.ws !== socket) return;
+      setFeed('WebSocket error · trying next endpoint', false);
       el('ou-signal-state').textContent = 'FEED ERROR';
+      try { socket.close(); } catch (e) {}
     };
-    state.ws.onclose = function (event) {
+    socket.onclose = function (event) {
+      if (state.ws !== socket) return;
+      clearInterval(state.heartbeatTimer);
       clearTimeout(state.feedTimeout);
       clearTimeout(state.connectTimeout);
+      clearInterval(state.heartbeatTimer);
       state.connected = false;
       state.subscriptionId = null;
       state.endpointIndex = (state.endpointIndex + 1) % PUBLIC_WS_ENDPOINTS.length;
       var closeInfo = event && event.code ? ' (code ' + event.code + ')' : '';
-      setFeed('Disconnected' + closeInfo + ' · retrying public feed', false);
+      setFeed('Disconnected' + closeInfo + ' · trying endpoint ' + ((state.endpointIndex % PUBLIC_WS_ENDPOINTS.length) + 1) + '/' + PUBLIC_WS_ENDPOINTS.length, false);
       if (el('ou-market')) el('ou-market').disabled = true;
       if (el('ou-signal-title')) el('ou-signal-title').textContent = 'RECONNECTING TO DERIV';
       if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before live data arrived. Retrying the other public endpoint automatically. If both fail, check whether your network or browser blocks WebSockets.';
@@ -163,9 +182,13 @@
     var msg;
     try { msg = JSON.parse(event.data); } catch (e) { return; }
     var meta = state.requests[msg.req_id] || {};
+    if (msg.msg_type === 'ping' || (msg.echo_req && msg.echo_req.ping)) return;
     if (msg.error) {
-      console.warn('Deriv public feed:', msg.error.message);
+      console.warn('Deriv public feed:', msg.error.code, msg.error.message);
       if (meta.type === 'symbols') {
+        state.marketResponse = true;
+        clearTimeout(state.feedTimeout);
+        setFeed('Deriv rejected market request', false);
         el('ou-signal-title').textContent = 'MARKET LIST UNAVAILABLE';
         el('ou-signal-message').textContent = msg.error.message || 'Deriv did not return the active market list.';
       } else if (meta.type === 'history') {
@@ -174,7 +197,13 @@
       }
       return;
     }
-    if (msg.msg_type === 'active_symbols') discover(msg.active_symbols || []);
+    if (msg.msg_type === 'active_symbols') {
+      state.connected = true;
+      state.marketResponse = true;
+      clearTimeout(state.feedTimeout);
+      setFeed('Deriv live feed connected', true);
+      discover(msg.active_symbols || []);
+    }
     if ((msg.msg_type === 'history' || msg.msg_type === 'candles') && meta.type === 'history') receiveHistory(meta.symbol, msg);
     if (msg.msg_type === 'tick' && msg.tick) receiveTick(msg.tick);
     if (msg.subscription && msg.subscription.id) state.subscriptionId = msg.subscription.id;
