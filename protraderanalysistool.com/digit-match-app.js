@@ -7,7 +7,7 @@
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
   var state = {
-    ws: null, connected: false, reconnectTimer: null, requestId: 0, requests: {}, endpointIndex: 0,
+    ws: null, connected: false, reconnectTimer: null, feedTimeout: null, requestId: 0, requests: {}, endpointIndex: 0,
     markets: [], selectedSymbol: '', samples: [], pip: 2, subscriptionId: null,
     lastDigit: null, signal: null, sampleReady: false, manualStopped: false
   };
@@ -116,12 +116,19 @@
       return;
     }
     state.ws.onopen = function () {
+      clearTimeout(state.feedTimeout);
       state.connected = true;
       setFeed('Deriv live feed connected', true);
       el('ou-signal-state').textContent = 'LOADING MARKETS';
       el('ou-signal-title').textContent = 'DISCOVERING LIVE MARKETS';
       el('ou-signal-message').textContent = 'Requesting active Volatility, 1-second and Jump symbols from Deriv.';
       send({active_symbols: 'brief'}, {type:'symbols'});
+      state.feedTimeout = setTimeout(function () {
+        if (state.connected && (!state.markets || !state.markets.length)) {
+          setFeed('No market response · switching feed', false);
+          if (state.ws && state.ws.readyState === 1) state.ws.close();
+        }
+      }, 9000);
     };
     state.ws.onmessage = onMessage;
     state.ws.onerror = function () {
@@ -129,6 +136,7 @@
       el('ou-signal-state').textContent = 'FEED ERROR';
     };
     state.ws.onclose = function (event) {
+      clearTimeout(state.feedTimeout);
       state.connected = false;
       state.subscriptionId = null;
       state.endpointIndex = (state.endpointIndex + 1) % PUBLIC_WS_ENDPOINTS.length;
@@ -174,6 +182,7 @@
   }
 
   function discover(rawSymbols) {
+    clearTimeout(state.feedTimeout);
     var mapped = rawSymbols.map(function (m) {
       return {
         raw: m,
