@@ -60,3 +60,14 @@
   .ou-digit-cell { min-height:74px; }
   .ou-frequency-heading { align-items:flex-start;flex-direction:column;gap:4px; }
 }
+
+
+.ou-legacy-match { display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:16px;padding:14px;border:1px solid rgba(148,163,184,.16);border-radius:12px;background:rgba(15,23,42,.48); }
+.ou-legacy-match>div:first-child { display:flex;flex-direction:column;gap:5px; }
+.ou-legacy-match>div:first-child strong { color:#e2e8f0;font-size:13px; }
+.ou-legacy-match>div:first-child small { color:#64748b;font-size:10px;line-height:1.5; }
+.ou-legacy-stat { display:grid;grid-template-columns:auto auto;align-items:center;column-gap:10px;text-align:right; }
+.ou-legacy-stat b { grid-row:span 2;width:42px;height:42px;display:grid;place-items:center;border-radius:50%;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.35);color:#7dd3fc;font-size:23px; }
+.ou-legacy-stat span { color:#e2e8f0;font-size:14px;font-weight:800; }
+.ou-legacy-stat small { color:#64748b;font-size:9px; }
+@media(max-width:700px) { .ou-legacy-match { align-items:flex-start; } .ou-legacy-match>div:first-child small { max-width:200px; } }
