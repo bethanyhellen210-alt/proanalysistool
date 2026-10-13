@@ -1,33 +1,32 @@
-# Individual access-key setup
+# Access-key setup with Neon PostgreSQL
 
-The login now checks keys on the server. Keys are stored as SHA-256 hashes, can expire, and can be revoked; active sessions are invalidated when their key is revoked. Do not put the Supabase service-role key or the admin key in frontend files.
+The access-key API uses Neon PostgreSQL. Supabase is no longer used by `api/access.js`.
 
-## 1. Create the database tables
+## 1. Create a Neon database
 
-1. Open the Supabase project used for this deployment.
-2. Open **SQL Editor** and create a new query.
-3. Copy all contents of `supabase-access-keys.sql` from this folder, run it, and confirm it succeeds.
+1. Open https://neon.tech and create a project.
+2. Open the project's SQL Editor.
+3. Run the full contents of `neon-access-keys.sql` from this folder.
 
-## 2. Configure server secrets
+## 2. Configure Vercel
 
-Add these as server-side environment variables/secrets in the hosting project:
+In **Vercel → Project → Settings → Environment Variables**, add these variables for Production (and Preview if you test previews):
 
-- `SUPABASE_URL`: the Supabase project URL, for example `https://YOUR_PROJECT_REF.supabase.co`.
-- `SUPABASE_SECRET_KEY`: the project's new `sb_secret_...` key (recommended), OR `SUPABASE_SERVICE_ROLE_KEY`: the legacy `service_role` key. Set only one if possible. Never expose either as a public frontend variable.
-- `ACCESS_ADMIN_KEY`: a randomly generated secret at least 24 characters long. Keep it private.
+- `DATABASE_URL`: copy the Neon connection string from the same Neon project. Keep the full connection string private.
+- `ACCESS_ADMIN_KEY`: a private random secret of at least 24 characters. Keep the same value you enter on the admin page.
 
-For Vercel, add the variables under **Project → Settings → Environment Variables**, for Production and Preview as appropriate, then redeploy. Set the Vercel project root to `protraderanalysistool.com` so `api/access.js` is deployed as the `/api/access` function.
+Set the Vercel project's Root Directory to `protraderanalysistool.com`. The `package.json` in that folder installs the Neon serverless driver and `api/access.js` deploys as `/api/access`.
 
-For the included Python server, add the same secrets in the hosting provider's server environment and restart the app.
+Save the variables and redeploy the project.
 
-## 3. Issue and revoke keys
+## 3. Test
 
-Open `https://YOUR-DEPLOYED-HOST/admin.html`, enter the `ACCESS_ADMIN_KEY`, and issue a key with a user label and optional expiry in days. Copy the key when it is first displayed; the raw key is not stored and cannot be shown again.
+Open `https://YOUR-DEPLOYED-HOST/admin.html`, enter the configured admin key, and create a test access key. Test that key in the normal login screen, then test listing and revoking it in the admin page.
 
-Use **Revoke** to disable a key and invalidate its active sessions. Users must sign in with a newly issued key to regain access.
+## Existing Supabase data
 
-## Notes
+Switching databases does not automatically copy existing keys or sessions. The database stores access-key hashes, not the original keys. If you need to preserve existing users, export/import the existing rows from both tables into Neon before switching the live deployment. Existing sessions may be allowed to expire and users can be issued new keys if you do not migrate them.
 
-- The existing analysis UI and market-data logic remain in place.
-- The server returns generic errors to visitors; server logs contain the technical error.
-- Database schema and server secrets must be configured before login can succeed. There is intentionally no hardcoded fallback key.
+## Security
+
+Never put `DATABASE_URL` or `ACCESS_ADMIN_KEY` in frontend JavaScript or commit them to GitHub. They must remain server-side Vercel environment variables. Do not share them in chat.
