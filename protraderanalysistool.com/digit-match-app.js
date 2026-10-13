@@ -4,8 +4,8 @@
   // Public Deriv market data only. This page never places trades or requests an account token.
   var PUBLIC_WS_ENDPOINTS = [
     'wss://ws.derivws.com/websockets/v3?app_id=1089',
-    'wss://ws.binaryws.com/websockets/v3',
-    'wss://ws.binaryws.com/websockets/v3?app_id=1089'
+    'wss://ws.binaryws.com/websockets/v3?app_id=1089',
+    'wss://ws.derivws.com/websockets/v3?app_id=1089&l=EN'
   ];
   var SAMPLE_SIZE = 1000;
   var LOW_DIGIT_LIMIT = 10.4;
@@ -131,12 +131,12 @@
       if (state.ws !== socket) return;
       clearTimeout(state.feedTimeout);
       clearTimeout(state.connectTimeout);
-      setFeed('Socket open · requesting Deriv data', false);
-      el('ou-signal-state').textContent = 'LOADING MARKETS';
-      el('ou-signal-title').textContent = 'DISCOVERING LIVE MARKETS';
-      el('ou-signal-message').textContent = 'Requesting active Volatility, 1-second and Jump symbols from Deriv.';
+      setFeed('Socket open · checking Deriv API', false);
+      el('ou-signal-state').textContent = 'CHECKING CONNECTION';
+      el('ou-signal-title').textContent = 'CHECKING DERIV LIVE FEED';
+      el('ou-signal-message').textContent = 'Testing the public API connection before requesting available markets.';
       state.marketResponse = false;
-      send({active_symbols: 'brief', product_type: 'basic'}, {type:'symbols'});
+      send({ping: 1}, {type:'initial-ping'});
       state.heartbeatTimer = setInterval(function () {
         if (state.ws === socket && socket.readyState === 1) send({ping: 1}, {type:'ping'});
       }, 20000);
@@ -172,7 +172,7 @@
       setFeed('Disconnected' + closeInfo + ' · trying endpoint ' + ((state.endpointIndex % PUBLIC_WS_ENDPOINTS.length) + 1) + '/' + PUBLIC_WS_ENDPOINTS.length, false);
       if (el('ou-market')) el('ou-market').disabled = true;
       if (el('ou-signal-title')) el('ou-signal-title').textContent = 'RECONNECTING TO DERIV';
-      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before live data arrived. Retrying the other public endpoint automatically. If both fail, check whether your network or browser blocks WebSockets.';
+      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before Deriv replied' + (event && event.reason ? ' (' + event.reason + ')' : '') + '. Retrying endpoint automatically. If this repeats on every endpoint, the network/browser may be blocking WebSockets or the test App ID may not be accepted.';
       state.reconnectTimer = setTimeout(connect, 1800);
     };
   }
@@ -181,6 +181,14 @@
     var msg;
     try { msg = JSON.parse(event.data); } catch (e) { return; }
     var meta = state.requests[msg.req_id] || {};
+    if (meta.type === 'initial-ping' && (msg.msg_type === 'ping' || (msg.echo_req && msg.echo_req.ping))) {
+      if (state.ws && state.ws.readyState === 1) {
+        el('ou-signal-title').textContent = 'DISCOVERING LIVE MARKETS';
+        el('ou-signal-message').textContent = 'Deriv replied. Requesting active Volatility, 1-second, Jump and other available symbols.';
+        send({active_symbols: 'brief', product_type: 'basic'}, {type:'symbols'});
+      }
+      return;
+    }
     if (msg.msg_type === 'ping' || (msg.echo_req && msg.echo_req.ping)) return;
     if (msg.error) {
       console.warn('Deriv public feed:', msg.error.code, msg.error.message);
