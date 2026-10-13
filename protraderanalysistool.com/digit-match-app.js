@@ -2,12 +2,12 @@
   'use strict';
 
   // Public Deriv market data only. This page never places trades or requests an account token.
-  var PUBLIC_WS = 'wss://ws.binaryws.com/websockets/v3';
+  var PUBLIC_WS_ENDPOINTS = ['wss://ws.binaryws.com/websockets/v3', 'wss://ws.derivws.com/websockets/v3?app_id=1089'];
   var SAMPLE_SIZE = 1000;
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
   var state = {
-    ws: null, connected: false, reconnectTimer: null, requestId: 0, requests: {},
+    ws: null, connected: false, reconnectTimer: null, requestId: 0, requests: {}, endpointIndex: 0,
     markets: [], selectedSymbol: '', samples: [], pip: 2, subscriptionId: null,
     lastDigit: null, signal: null, sampleReady: false, manualStopped: false
   };
@@ -107,7 +107,7 @@
   function connect() {
     clearTimeout(state.reconnectTimer);
     setFeed('Connecting to Deriv…', false);
-    try { state.ws = new WebSocket(PUBLIC_WS); }
+    try { state.ws = new WebSocket(PUBLIC_WS_ENDPOINTS[state.endpointIndex % PUBLIC_WS_ENDPOINTS.length]); }
     catch (e) {
       setFeed('WebSocket unavailable', false);
       el('ou-signal-title').textContent = 'CONNECTION UNAVAILABLE';
@@ -128,12 +128,16 @@
       setFeed('Market feed error · retrying', false);
       el('ou-signal-state').textContent = 'FEED ERROR';
     };
-    state.ws.onclose = function () {
+    state.ws.onclose = function (event) {
       state.connected = false;
       state.subscriptionId = null;
-      setFeed('Disconnected · reconnecting', false);
+      state.endpointIndex = (state.endpointIndex + 1) % PUBLIC_WS_ENDPOINTS.length;
+      var closeInfo = event && event.code ? ' (code ' + event.code + ')' : '';
+      setFeed('Disconnected' + closeInfo + ' · trying alternate feed', false);
       if (el('ou-market')) el('ou-market').disabled = true;
-      state.reconnectTimer = setTimeout(connect, 2500);
+      if (el('ou-signal-title')) el('ou-signal-title').textContent = 'RECONNECTING TO DERIV';
+      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'The connection closed. Trying the alternate public Deriv WebSocket endpoint automatically.';
+      state.reconnectTimer = setTimeout(connect, 1800);
     };
   }
 
@@ -158,6 +162,17 @@
     if (msg.subscription && msg.subscription.id) state.subscriptionId = msg.subscription.id;
   }
 
+  function marketGroup(m) {
+    var hay = (m.symbol + ' ' + m.name + ' ' + m.market + ' ' + m.type).toLowerCase();
+    if (/jump|^jd/.test(hay)) return 'Jump indices';
+    if (/1hz|1-second|1 second|\\b1s\\b/.test(hay)) return '1-second indices';
+    if (/volatility|^r_\\d+/.test(hay)) return 'Volatility indices';
+    if (/forex|currency|\\b[a-z]{3}\\s*\\/\\s*[a-z]{3}\\b/.test(hay)) return 'Forex & currencies';
+    if (/gold|silver|commodity|metal/.test(hay)) return 'Metals & commodities';
+    if (/stock|equity|index/.test(hay)) return 'Stocks & other indices';
+    return 'Other available markets';
+  }
+
   function discover(rawSymbols) {
     var mapped = rawSymbols.map(function (m) {
       return {
@@ -167,43 +182,50 @@
         market: m.market || m.market_display_name || '',
         type: m.underlying_symbol_type || m.symbol_type || ''
       };
-    }).filter(function (m) {
-      if (!m.symbol) return false;
-      var hay = (m.symbol + ' ' + m.name + ' ' + m.market + ' ' + m.type).toLowerCase();
-      return /volatility|\b1\s*second|\b1s\b|jump/.test(hay) ||
-        /^(R_\d+|1HZ\w+|JD\w*|JUMP\w*)$/i.test(m.symbol);
-    }).sort(function (a,b) {
-      function group(m) {
-        var s=(m.symbol+' '+m.name).toLowerCase();
-        return /jump|^jd/.test(s) ? 2 : (/1hz|1 second|1s/.test(s) ? 1 : 0);
-      }
-      return group(a)-group(b) || a.name.localeCompare(b.name);
-    });
+    }).filter(function (m) { return !!m.symbol; });
     var unique = {};
     state.markets = mapped.filter(function (m) {
       if (unique[m.symbol]) return false;
       unique[m.symbol] = true;
+      m.group = marketGroup(m);
       return true;
+    }).sort(function (a,b) {
+      var order = ['Volatility indices','1-second indices','Jump indices','Forex & currencies','Metals & commodities','Stocks & other indices','Other available markets'];
+      var ag = order.indexOf(a.group), bg = order.indexOf(b.group);
+      return ag - bg || a.name.localeCompare(b.name);
     });
+
     var select = el('ou-market');
     select.innerHTML = '';
     if (!state.markets.length) {
-      select.add(new Option('No matching live markets returned', ''));
+      select.add(new Option('Deriv returned no active markets', ''));
       select.disabled = true;
-      el('ou-signal-title').textContent = 'NO MARKETS FOUND';
-      el('ou-signal-message').textContent = 'Deriv returned no matching Volatility, 1-second or Jump symbols. Reconnect or try again later.';
+      el('ou-signal-title').textContent = 'NO ACTIVE MARKETS';
+      el('ou-signal-message').textContent = 'Deriv connected but returned an empty market list. The app will retry automatically.';
       el('ou-signal-state').textContent = 'NO MARKETS';
+      state.reconnectTimer = setTimeout(connect, 3500);
       return;
     }
+
+    var groups = {};
     state.markets.forEach(function (m) {
-      var label = m.name + ' (' + m.symbol + ')';
-      select.add(new Option(label, m.symbol));
+      if (!groups[m.group]) {
+        groups[m.group] = document.createElement('optgroup');
+        groups[m.group].label = m.group;
+        select.appendChild(groups[m.group]);
+      }
+      groups[m.group].appendChild(new Option(m.name + ' (' + m.symbol + ')', m.symbol));
     });
+
     var preferred = state.markets.find(function (m) { return m.symbol === '1HZ100V'; }) ||
-      state.markets.find(function (m) { return m.symbol === 'R_100'; }) || state.markets[0];
+      state.markets.find(function (m) { return m.symbol === 'R_100'; }) ||
+      state.markets.find(function (m) { return m.group === 'Volatility indices'; }) ||
+      state.markets[0];
     select.value = preferred.symbol;
     select.disabled = false;
     el('ou-start').disabled = false;
+    el('ou-signal-title').textContent = 'MARKETS READY';
+    el('ou-signal-message').textContent = state.markets.length + ' active Deriv markets discovered. Select a market to load live ticks.';
     loadMarket(preferred.symbol);
   }
 
