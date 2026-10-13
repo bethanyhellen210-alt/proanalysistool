@@ -109,7 +109,7 @@
       })
       .then(function (data) {
         derivAppId = String(data.appId || '').trim();
-        if (!/^\\d+$/.test(derivAppId)) throw new Error('A numeric Deriv App ID is required for this v3 live feed. Check the App ID in your registered application.');
+        if (!/^\d+$/.test(derivAppId)) throw new Error('A numeric Deriv App ID is required for this v3 live feed. Check the App ID in your registered application.');
         var encodedId = encodeURIComponent(derivAppId);
         // The legacy v3 public WebSocket API requires a numeric registered App ID.
         // The supplied mixed-format value is not treated as a valid v3 App ID.
