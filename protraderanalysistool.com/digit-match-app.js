@@ -56,7 +56,8 @@
           '<div class="ou-metrics"><article><span>Latest digit</span><strong id="ou-last-digit">—</strong><small id="ou-last-price">Waiting for tick</small></article><article><span>Trigger digit frequency</span><strong id="ou-trigger-frequency">—</strong><small id="ou-trigger-label">Selected trigger digit</small></article><article><span>Target digit frequency</span><strong id="ou-target-frequency">—</strong><small id="ou-target-label">Best eligible target</small></article><article><span>Ticks analysed</span><strong id="ou-tick-count">0</strong><small>Rolling sample, max 1,000</small></article></div>' +
           '<div class="ou-frequency-heading"><strong>Digit frequency · 0–9</strong><small>Observed from live Deriv ticks</small></div>' +
           '<div class="ou-digit-grid" id="ou-digit-grid">' + Array.from({length:10},function(_,i){return '<div class="ou-digit-cell" data-digit="'+i+'"><b>'+i+'</b><span>—</span><i></i></div>';}).join('') + '</div>' +
-          '<div class="ou-disclaimer">Analysis signal only. No contract is purchased automatically. Frequencies describe the selected sample and do not guarantee the next digit.</div>' +
+          '<section class="ou-legacy-match"><div><span class="dm-kicker">Existing feature retained</span><strong>Digit Match monitor</strong><small>Highest-frequency digit from the same live tick sample</small></div><div class="ou-legacy-stat"><b id="ou-legacy-digit">—</b><span id="ou-legacy-frequency">—</span><small id="ou-legacy-count">Waiting for tick data</small></div></section>' +
+          '<div class="ou-disclaimer">Analysis signals only. No contract is purchased automatically. Frequencies describe the selected sample and do not guarantee the next digit.</div>' +
         '</section>' +
       '</main></div>';
   }
@@ -336,6 +337,14 @@
   function analyse() {
     if (!el('ou-contract')) return;
     var stats = getStats();
+    var topDigit = 0;
+    for (var td = 1; td <= 9; td++) if (stats.counts[td] > stats.counts[topDigit]) topDigit = td;
+    var legacyDigit = el('ou-legacy-digit');
+    var legacyFrequency = el('ou-legacy-frequency');
+    var legacyCount = el('ou-legacy-count');
+    if (legacyDigit) legacyDigit.textContent = stats.total ? String(topDigit) : '—';
+    if (legacyFrequency) legacyFrequency.textContent = stats.total ? pct(stats.freq[topDigit]) : '—';
+    if (legacyCount) legacyCount.textContent = stats.total ? stats.counts[topDigit] + ' occurrences in ' + stats.total + ' ticks' : 'Waiting for tick data';
     var type = el('ou-contract').value;
     var barrier = Number(el('ou-barrier').value);
     var current = state.lastDigit;
