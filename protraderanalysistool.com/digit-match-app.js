@@ -175,9 +175,9 @@
   function marketGroup(m) {
     var hay = (m.symbol + ' ' + m.name + ' ' + m.market + ' ' + m.type).toLowerCase();
     if (/jump|^jd/.test(hay)) return 'Jump indices';
-    if (/1hz|1-second|1 second|\\b1s\\b/.test(hay)) return '1-second indices';
-    if (/volatility|^r_\\d+/.test(hay)) return 'Volatility indices';
-    if (/forex|currency|\\b[a-z]{3}\\s*\\/\\s*[a-z]{3}\\b/.test(hay)) return 'Forex & currencies';
+    if (/1hz|1-second|1 second|\b1s\b/.test(hay)) return '1-second indices';
+    if (/volatility|^r_\d+/.test(hay)) return 'Volatility indices';
+    if (/forex|currency|\b[a-z]{3}\s*\/\s*[a-z]{3}\b/.test(hay)) return 'Forex & currencies';
     if (/gold|silver|commodity|metal/.test(hay)) return 'Metals & commodities';
     if (/stock|equity|index/.test(hay)) return 'Stocks & other indices';
     return 'Other available markets';
