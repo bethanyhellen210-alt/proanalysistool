@@ -110,7 +110,13 @@ module.exports = async (req, res) => {
     }
     return json(res, 200, { ok: true, revoked: rows.length > 0 });
   } catch (error) {
-    console.error('Access API error:', error.message);
-    return json(res, 500, { error: 'Access service unavailable. Check server environment and database setup.' });
+    // Return a sanitized diagnostic for setup troubleshooting. The database helper
+    // reports only missing configuration or an HTTP status code, never credentials.
+    const diagnostic = String(error && error.message || 'Unknown server error').slice(0, 180);
+    console.error('Access API error:', diagnostic);
+    return json(res, 500, {
+      error: 'Access service unavailable. Check server environment and database setup.',
+      diagnostic
+    });
   }
 };
