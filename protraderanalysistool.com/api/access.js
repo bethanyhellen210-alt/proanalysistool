@@ -9,25 +9,48 @@ const hash = value => crypto.createHash('sha256').update(String(value)).digest('
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 const db = async (table, method='GET', query='', body) => {
   const base = process.env.SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
-  if (!base || !service) throw new Error('Server access database is not configured.');
-  // Supabase legacy service_role keys are JWTs and can be sent as both headers.
-  // New sb_secret_ API keys are not JWTs; send them as apikey only and let the
-  // Supabase API gateway apply the server-side role for the secret key.
-  const headers = {
-    apikey: service,
-    'Content-Type': 'application/json',
-    Prefer: 'return=representation'
-  };
-  if (!service.startsWith('sb_secret_')) headers.Authorization = 'Bearer ' + service;
-  const response = await fetch(base.replace(/\/$/, '') + '/rest/v1/' + table + (query ? '?' + query : ''), {
-    method,
-    headers,
-    ...(body ? { body: JSON.stringify(body) } : {})
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error('Access database request failed (' + response.status + ').');
-  return text ? JSON.parse(text) : [];
+  // Try both configured server-only key variables, so a stale value in one
+  // variable does not override a valid key in the other.
+  const candidates = [
+    ['SUPABASE_SECRET_KEY', process.env.SUPABASE_SECRET_KEY],
+    ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY]
+  ].filter(([, value]) => Boolean(value));
+  if (!base || !candidates.length) throw new Error('Server access database is not configured.');
+
+  let lastStatus = 0;
+  let lastReason = '';
+  for (const [source, service] of candidates) {
+    const headers = {
+      apikey: service,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation'
+    };
+    // Legacy service_role keys are JWTs; new sb_secret_ keys are not.
+    if (!service.startsWith('sb_secret_')) headers.Authorization = 'Bearer ' + service;
+    const response = await fetch(base.replace(/\\/$/, '') + '/rest/v1/' + table + (query ? '?' + query : ''), {
+      method,
+      headers,
+      ...(body ? { body: JSON.stringify(body) } : {})
+    });
+    const responseText = await response.text();
+    if (response.ok) return responseText ? JSON.parse(responseText) : [];
+    lastStatus = response.status;
+    try {
+      const detail = JSON.parse(responseText);
+      lastReason = String(detail.message || detail.error_description || detail.error || '');
+    } catch (_) {
+      lastReason = '';
+    }
+    // Retry with the other configured key only for authentication/permission failures.
+    if (![401, 403].includes(response.status)) {
+      throw new Error('Access database request failed (' + response.status + ').');
+    }
+    console.error('Supabase access key rejected:', source, response.status);
+  }
+  const safeReason = lastReason && /api key|jwt|token|permission|authori[sz]|credential|role/i.test(lastReason)
+    ? lastReason.slice(0, 120)
+    : 'Check that the server key belongs to the configured Supabase project.';
+  throw new Error('Supabase rejected configured server key(s) (' + lastStatus + '). ' + safeReason);
 };
 const activeKey = async keyHash => {
   const rows = await db('access_keys', 'GET',
