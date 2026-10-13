@@ -111,10 +111,13 @@
         derivAppId = String(data.appId || '').trim();
         if (!/^[A-Za-z0-9_-]{1,128}$/.test(derivAppId)) throw new Error('DERIV_APP_ID has an unsupported format. Check your registered Deriv application.');
         var encodedId = encodeURIComponent(derivAppId);
+        // Public market-data endpoints do not require account authentication.
+        // Try the no-app-id public URLs first so an unsupported/rotated identifier
+        // cannot prevent read-only live ticks from connecting.
         PUBLIC_WS_ENDPOINTS = [
-          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId,
-          'wss://ws.binaryws.com/websockets/v3?app_id=' + encodedId,
-          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId + '&l=EN'
+          'wss://ws.derivws.com/websockets/v3',
+          'wss://ws.binaryws.com/websockets/v3',
+          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId
         ];
         connect();
       })
@@ -197,7 +200,7 @@
       setFeed('Disconnected' + closeInfo + ' · trying endpoint ' + ((state.endpointIndex % PUBLIC_WS_ENDPOINTS.length) + 1) + '/' + PUBLIC_WS_ENDPOINTS.length, false);
       if (el('ou-market')) el('ou-market').disabled = true;
       if (el('ou-signal-title')) el('ou-signal-title').textContent = 'RECONNECTING TO DERIV';
-      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before Deriv replied' + (event && event.reason ? ' (' + event.reason + ')' : '') + '. Retrying endpoint automatically. If this repeats on every endpoint, the network/browser may be blocking WebSockets or the test App ID may not be accepted.';
+      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before Deriv replied' + (event && event.reason ? ' (' + event.reason + ')' : '') + '. Retrying endpoint automatically. The app tries public endpoints without an App ID before trying the configured identifier. If all fail, check the network/browser WebSocket connection.';
       state.reconnectTimer = setTimeout(connect, 1800);
     };
   }
