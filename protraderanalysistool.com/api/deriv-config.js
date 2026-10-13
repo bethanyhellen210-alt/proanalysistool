@@ -7,11 +7,11 @@ module.exports = (req, res) => {
     return;
   }
 
-  // Use the supplied updated identifier by default; Vercel can override it with DERIV_APP_ID.
-  const appId = String(process.env.DERIV_APP_ID || '34EWiRFsKNgMMfSbjXawQ').trim();
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(appId)) {
+  // Deriv's legacy v3 WebSocket API uses a numeric registered App ID.
+  const appId = String(process.env.DERIV_APP_ID || '').trim();
+  if (!/^\\d+$/.test(appId)) {
     res.status(503).end(JSON.stringify({
-      error: 'DERIV_APP_ID is missing or has an unsupported format. Check the App ID shown for your registered Deriv application.'
+      error: 'A numeric Deriv App ID is required for the v3 WebSocket feed. The mixed-format value is not accepted here. Copy the numeric App ID from your registered application at api.deriv.com/dashboard and set DERIV_APP_ID in Vercel.'
     }));
     return;
   }
