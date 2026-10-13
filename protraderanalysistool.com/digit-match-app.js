@@ -109,7 +109,7 @@
       })
       .then(function (data) {
         derivAppId = String(data.appId || '').trim();
-        if (!/^\\d+$/.test(derivAppId)) throw new Error('DERIV_APP_ID must be your numeric Deriv App ID.');
+        if (!/^\d+$/.test(derivAppId)) throw new Error('DERIV_APP_ID must be your numeric Deriv App ID.');
         var encodedId = encodeURIComponent(derivAppId);
         PUBLIC_WS_ENDPOINTS = [
           'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId,
