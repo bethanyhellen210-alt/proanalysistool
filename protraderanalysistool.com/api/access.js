@@ -27,7 +27,7 @@ const db = async (table, method='GET', query='', body) => {
     };
     // Legacy service_role keys are JWTs; new sb_secret_ keys are not.
     if (!service.startsWith('sb_secret_')) headers.Authorization = 'Bearer ' + service;
-    const response = await fetch(base.replace(/\\/$/, '') + '/rest/v1/' + table + (query ? '?' + query : ''), {
+    const response = await fetch(base.replace(/\/$/, '') + '/rest/v1/' + table + (query ? '?' + query : ''), {
       method,
       headers,
       ...(body ? { body: JSON.stringify(body) } : {})
