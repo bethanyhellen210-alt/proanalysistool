@@ -125,7 +125,7 @@
         setFeed('Deriv App ID not configured', false);
         el('ou-signal-state').textContent = 'CONFIGURATION REQUIRED';
         el('ou-signal-title').textContent = 'ADD YOUR DERIV APP ID';
-        el('ou-signal-message').textContent = (error && error.message ? error.message : 'Unable to load the saved Deriv App ID.') + ' Check DERIV_APP_ID in Vercel Settings → Environment Variables, then redeploy.';
+        el('ou-signal-message').textContent = (error && error.message ? error.message : 'Unable to load the saved Deriv App ID.') + ' Set DERIV_APP_ID in your current hosting environment, then restart or redeploy the app.';
         state.reconnectTimer = setTimeout(loadDerivConfig, 5000);
       });
   }
