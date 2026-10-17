@@ -3,7 +3,6 @@
 
   // Public Deriv market data only. This page never places trades or requests an account token.
   var PUBLIC_WS_ENDPOINTS = [];
-  var derivAppId = '';
   var SAMPLE_SIZE = 1000;
   var LOW_DIGIT_LIMIT = 10.4;
   var HIGH_DIGIT_LIMIT = 10.5;
@@ -100,34 +99,17 @@
   }
 
   function loadDerivConfig() {
-    fetch('/api/deriv-config', { cache: 'no-store' })
-      .then(function (response) {
-        return response.json().then(function (data) {
-          if (!response.ok) throw new Error(data.error || 'Could not load Deriv App ID configuration.');
-          return data;
-        });
-      })
-      .then(function (data) {
-        derivAppId = String(data.appId || '').trim();
-        if (!/^\d+$/.test(derivAppId)) throw new Error('A numeric Deriv App ID is required for this v3 live feed. Check the App ID in your registered application.');
-        var encodedId = encodeURIComponent(derivAppId);
-        // The legacy v3 public WebSocket API requires a numeric registered App ID.
-        // The supplied mixed-format value is not treated as a valid v3 App ID.
-        // Keep the public feed on the documented v3 endpoint and expose connection
-        // errors instead of cycling endpoints that cannot fix an invalid App ID.
-        PUBLIC_WS_ENDPOINTS = [
-          'wss://ws.derivws.com/websockets/v3?app_id=' + encodedId,
-          'wss://ws.binaryws.com/websockets/v3?app_id=' + encodedId
-        ];
-        connect();
-      })
-      .catch(function (error) {
-        setFeed('Deriv App ID not configured', false);
-        el('ou-signal-state').textContent = 'CONFIGURATION REQUIRED';
-        el('ou-signal-title').textContent = 'ADD YOUR DERIV APP ID';
-        el('ou-signal-message').textContent = (error && error.message ? error.message : 'Unable to load the saved Deriv App ID.') + ' Set DERIV_APP_ID in your current hosting environment, then restart or redeploy the app.';
-        state.reconnectTimer = setTimeout(loadDerivConfig, 5000);
-      });
+    // Public market-data feed: no account token or app ID is needed.
+    // Deriv documents this unauthenticated WebSocket endpoint for public market data.
+    PUBLIC_WS_ENDPOINTS = [
+      'wss://ws.binaryws.com/websockets/v3'
+    ];
+    state.endpointIndex = 0;
+    setFeed('Connecting to public Deriv feed…', false);
+    el('ou-signal-state').textContent = 'CONNECTING';
+    el('ou-signal-title').textContent = 'CONNECTING TO PUBLIC DERIV DATA';
+    el('ou-signal-message').textContent = 'Connecting to Deriv public market data. No App ID or account token is required for this read-only feed.';
+    connect();
   }
 
   function setFeed(text, live) {
@@ -200,7 +182,7 @@
       setFeed('Disconnected' + closeInfo + ' · trying endpoint ' + ((state.endpointIndex % PUBLIC_WS_ENDPOINTS.length) + 1) + '/' + PUBLIC_WS_ENDPOINTS.length, false);
       if (el('ou-market')) el('ou-market').disabled = true;
       if (el('ou-signal-title')) el('ou-signal-title').textContent = 'RECONNECTING TO DERIV';
-      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before Deriv replied' + (event && event.reason ? ' (' + event.reason + ')' : '') + '. Retrying the configured public Deriv WebSocket endpoints with the registered App ID. If both fail, verify DERIV_APP_ID and check whether your network/browser allows secure WebSocket connections.';
+      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before Deriv replied' + (event && event.reason ? ' (' + event.reason + ')' : '') + '. Retrying the public Deriv WebSocket endpoint. No account token or App ID is used for this read-only market feed. If it continues to fail, check whether your network/browser allows secure WebSocket connections.';
       state.reconnectTimer = setTimeout(connect, 1800);
     };
   }
