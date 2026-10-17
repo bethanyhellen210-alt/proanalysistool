@@ -60,6 +60,22 @@ def admin_ok(handler, body):
 
 class SPAHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
+        # Serve the public Deriv App ID from the current host's environment.
+        # This route is needed when running the included Python server (for example on Replit);
+        # static-file fallback would otherwise return index.html to the JSON fetch.
+        request_path = urllib.parse.urlparse(self.path).path
+        if request_path == "/api/deriv-config":
+            app_id = str(os.environ.get("DERIV_APP_ID", "")).strip()
+            if not app_id:
+                return self.send_json(503, {
+                    "error": "DERIV_APP_ID is not configured in the hosting environment."
+                })
+            if not app_id.isdigit():
+                return self.send_json(503, {
+                    "error": "The Deriv v3 WebSocket API requires the numeric App ID from your registered Deriv application. Set DERIV_APP_ID to that numeric ID."
+                })
+            return self.send_json(200, {"appId": app_id})
+
         requested_path = self.translate_path(self.path)
         if not os.path.exists(requested_path) or os.path.isdir(requested_path):
             self.path = "/index.html"
