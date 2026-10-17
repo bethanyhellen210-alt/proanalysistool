@@ -200,7 +200,7 @@
       setFeed('Disconnected' + closeInfo + ' · trying endpoint ' + ((state.endpointIndex % PUBLIC_WS_ENDPOINTS.length) + 1) + '/' + PUBLIC_WS_ENDPOINTS.length, false);
       if (el('ou-market')) el('ou-market').disabled = true;
       if (el('ou-signal-title')) el('ou-signal-title').textContent = 'RECONNECTING TO DERIV';
-      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before Deriv replied' + (event && event.reason ? ' (' + event.reason + ')' : '') + '. Retrying endpoint automatically. The app tries public endpoints without an App ID before trying the configured identifier. If all fail, check the network/browser WebSocket connection.';
+      if (el('ou-signal-message')) el('ou-signal-message').textContent = 'Connection ended before Deriv replied' + (event && event.reason ? ' (' + event.reason + ')' : '') + '. Retrying the configured public Deriv WebSocket endpoints with the registered App ID. If both fail, verify DERIV_APP_ID and check whether your network/browser allows secure WebSocket connections.';
       state.reconnectTimer = setTimeout(connect, 1800);
     };
   }
